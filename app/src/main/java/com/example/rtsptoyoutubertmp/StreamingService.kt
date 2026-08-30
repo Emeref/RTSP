@@ -35,7 +35,7 @@ class StreamingService : Service() {
         FFmpegKitConfig.enableLogCallback { log ->
             synchronized(logBuffer) {
                 logBuffer.add(log.message)
-                if (logBuffer.size > 1000) logBuffer.removeAt(0) // Ograniczenie pamięci
+                if (logBuffer.size > 200) logBuffer.removeAt(0) // Ograniczenie pamięci
             }
         }
     }

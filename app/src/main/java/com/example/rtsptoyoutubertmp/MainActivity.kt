@@ -33,9 +33,21 @@ class MainActivity : AppCompatActivity() {
     private val logUpdater = object : Runnable {
         override fun run() {
             synchronized(StreamingService.logBuffer) {
+                // Jeśli w buforze jest mniej danych niż ostatnio (np. wyczyszczono), zresetuj
+                if (StreamingService.logBuffer.size < lastLogIndex) {
+                    lastLogIndex = 0
+                    logTextView.text = ""
+                }
+
                 while (lastLogIndex < StreamingService.logBuffer.size) {
                     logTextView.append(StreamingService.logBuffer[lastLogIndex] + "\n")
                     lastLogIndex++
+                }
+
+                // Ograniczenie wyświetlanych logów do ostatnich 200 wierszy
+                val lines = logTextView.text.split("\n")
+                if (lines.size > 200) {
+                    logTextView.text = lines.takeLast(200).joinToString("\n")
                 }
             }
             if (autoScrollCheckBox.isChecked && lastLogIndex > 0) {
