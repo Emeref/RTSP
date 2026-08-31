@@ -5,12 +5,7 @@ import android.content.*
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.view.MotionEvent
-import android.widget.Button
-import android.widget.CheckBox
-import android.widget.ScrollView
-import android.widget.TextView
-import android.widget.Toast
+import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
 import com.google.android.material.textfield.TextInputEditText
 
@@ -27,33 +22,27 @@ class MainActivity : AppCompatActivity() {
 
     private var isStreaming = false
     private val handler = Handler(Looper.getMainLooper())
-    private var lastLogIndex = 0
+    private val prefs by lazy { getSharedPreferences("streaming_prefs", Context.MODE_PRIVATE) }
 
-    // Runnable odpytujący logi z bufora usługi
     private val logUpdater = object : Runnable {
         override fun run() {
             synchronized(StreamingService.logBuffer) {
-                // Jeśli w buforze jest mniej danych niż ostatnio (np. wyczyszczono), zresetuj
-                if (StreamingService.logBuffer.size < lastLogIndex) {
-                    lastLogIndex = 0
-                    logTextView.text = ""
+                val currentText = logTextView.text.toString()
+                val logBuilder = StringBuilder()
+                for (log in StreamingService.logBuffer) {
+                    logBuilder.append(log).append("\n")
                 }
-
-                while (lastLogIndex < StreamingService.logBuffer.size) {
-                    logTextView.append(StreamingService.logBuffer[lastLogIndex] + "\n")
-                    lastLogIndex++
-                }
-
-                // Ograniczenie wyświetlanych logów do ostatnich 200 wierszy
-                val lines = logTextView.text.split("\n")
-                if (lines.size > 200) {
-                    logTextView.text = lines.takeLast(200).joinToString("\n")
+                val newText = logBuilder.toString()
+                
+                // Aktualizuj tylko jeśli tekst się zmienił
+                if (currentText != newText) {
+                    logTextView.text = newText
+                    if (autoScrollCheckBox.isChecked) {
+                        logScrollView.post { logScrollView.fullScroll(ScrollView.FOCUS_DOWN) }
+                    }
                 }
             }
-            if (autoScrollCheckBox.isChecked && lastLogIndex > 0) {
-                logScrollView.post { logScrollView.fullScroll(ScrollView.FOCUS_DOWN) }
-            }
-            handler.postDelayed(this, 500)
+            handler.postDelayed(this, 1000)
         }
     }
 
@@ -71,12 +60,8 @@ class MainActivity : AppCompatActivity() {
         logScrollView = findViewById(R.id.logScrollView)
         autoScrollCheckBox = findViewById(R.id.autoScrollCheckBox)
 
-        if (BuildConfig.RTSP_URL.isNotEmpty()) {
-            rtspEditText.setText(BuildConfig.RTSP_URL)
-        }
-        if (BuildConfig.RTMP_URL.isNotEmpty()) {
-            rtmpEditText.setText(BuildConfig.RTMP_URL)
-        }
+        rtspEditText.setText(prefs.getString("last_rtsp", ""))
+        rtmpEditText.setText(prefs.getString("last_rtmp", ""))
 
         startButton.setOnClickListener {
             if (isStreaming) stopStreaming() else startStreaming()
@@ -87,18 +72,10 @@ class MainActivity : AppCompatActivity() {
             clipboard.setPrimaryClip(ClipData.newPlainText("FFmpeg Logs", logTextView.text))
             Toast.makeText(this, "Skopiowano", Toast.LENGTH_SHORT).show()
         }
-
-        logScrollView.setOnTouchListener { _, event ->
-            if (event.action == MotionEvent.ACTION_DOWN || event.action == MotionEvent.ACTION_MOVE) {
-                autoScrollCheckBox.isChecked = false
-            }
-            false
-        }
     }
 
     override fun onResume() {
         super.onResume()
-        lastLogIndex = 0
         handler.post(logUpdater)
     }
 
@@ -115,8 +92,7 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        logTextView.text = "--- Uruchamianie streamingu ---\n"
-        lastLogIndex = 0
+        prefs.edit().putString("last_rtsp", rtsp).putString("last_rtmp", rtmp).apply()
         
         val intent = Intent(this, StreamingService::class.java).apply {
             action = StreamingService.ACTION_START
