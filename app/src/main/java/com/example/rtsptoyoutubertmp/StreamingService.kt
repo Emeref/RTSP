@@ -13,7 +13,11 @@ import androidx.core.app.NotificationCompat
 import com.arthenica.ffmpegkit.FFmpegKit
 import com.arthenica.ffmpegkit.FFmpegKitConfig
 import com.arthenica.ffmpegkit.Level
+import java.io.File
+import java.text.SimpleDateFormat
 import java.util.ArrayDeque
+import java.util.Date
+import java.util.Locale
 
 class StreamingService : Service() {
 
@@ -23,6 +27,7 @@ class StreamingService : Service() {
         const val ACTION_STOP = "ACTION_STOP"
         const val EXTRA_RTSP = "EXTRA_RTSP"
         const val EXTRA_RTMP = "EXTRA_RTMP"
+        const val EXTRA_LOG_FILE = "EXTRA_LOG_FILE"
         
         private const val MAX_LOGS = 50
         val logBuffer = ArrayDeque<String>(MAX_LOGS)
@@ -39,15 +44,34 @@ class StreamingService : Service() {
 
     private var wakeLock: PowerManager.WakeLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
+    private var logFile: File? = null
+    private var frameCount = 0
+    private val dateFormat = SimpleDateFormat("HH:mm:ss", Locale.US)
 
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
-        // Logowanie FFmpeg ustawione na błędy, aby nie zaśmiecać bufora
-        FFmpegKitConfig.setLogLevel(Level.AV_LOG_ERROR)
+        FFmpegKitConfig.setLogLevel(Level.AV_LOG_INFO)
         FFmpegKitConfig.enableLogCallback { log ->
-            addLog("FFmpeg Error: ${log.message.trim()}")
+            val msg = log.message ?: ""
+            
+            if (msg.contains("Stream mapping") || msg.contains("Opening")) {
+                writeLog("START: $msg")
+            } else if (msg.contains("frame=")) {
+                if (frameCount < 10) {
+                    writeLog("FRAME: $msg")
+                    frameCount++
+                }
+            } else if (log.level == Level.AV_LOG_ERROR) {
+                writeLog("ERROR: $msg")
+            }
         }
+    }
+
+    private fun writeLog(msg: String) {
+        val formatted = "[${dateFormat.format(Date())}] $msg"
+        addLog(formatted)
+        logFile?.appendText(formatted + "\n")
     }
 
     @SuppressLint("WakelockTimeout")
@@ -56,10 +80,16 @@ class StreamingService : Service() {
             ACTION_START -> {
                 val rtspUrl = intent.getStringExtra(EXTRA_RTSP) ?: ""
                 val rtmpUrl = intent.getStringExtra(EXTRA_RTMP) ?: ""
+                val logFileName = intent.getStringExtra(EXTRA_LOG_FILE) ?: "log.txt"
+                val dir = File(filesDir, "logs")
+                if (!dir.exists()) dir.mkdir()
+                logFile = File(dir, logFileName)
+                frameCount = 0
+                
                 acquireLocks()
                 startForegroundServiceWithNotification()
                 
-                addLog("START: Streaming rozpoczęty (Bitrate: 8000k)")
+                writeLog("START: Streaming rozpoczęty")
                 startFFmpeg(rtspUrl, rtmpUrl)
             }
             ACTION_STOP -> stopStreaming()
@@ -88,9 +118,9 @@ class StreamingService : Service() {
         Thread {
             val session = FFmpegKit.execute(ffmpegCommand)
             if (session.returnCode.isValueSuccess) {
-                addLog("STOP: Streaming zakończony pomyślnie")
+                writeLog("STOP: Streaming zakończony pomyślnie")
             } else {
-                addLog("STOP: Błąd streamingu: ${session.failStackTrace?.take(100)}")
+                writeLog("STOP: Błąd streamingu: ${session.failStackTrace?.take(100)}")
             }
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
@@ -100,9 +130,9 @@ class StreamingService : Service() {
     private fun stopStreaming() {
         FFmpegKit.cancel()
         releaseLocks()
+        writeLog("STOP: Zatrzymano ręcznie")
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
-        addLog("STOP: Zatrzymano ręcznie")
     }
 
     private fun createNotificationChannel() {
@@ -113,9 +143,7 @@ class StreamingService : Service() {
     private fun startForegroundServiceWithNotification() {
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Streaming w toku")
-            .setContentText("Przesyłanie strumienia RTSP do RTMP...")
             .setSmallIcon(android.R.drawable.ic_menu_camera)
-            .setOngoing(true)
             .build()
         if (Build.VERSION.SDK_INT >= 34) {
             startForeground(1, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROCESSING)

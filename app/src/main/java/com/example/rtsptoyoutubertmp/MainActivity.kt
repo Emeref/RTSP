@@ -6,19 +6,20 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.widget.*
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import com.google.android.material.textfield.TextInputEditText
+import java.io.File
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var rtspEditText: TextInputEditText
     private lateinit var rtmpEditText: TextInputEditText
     private lateinit var startButton: Button
-    private lateinit var copyLogsButton: Button
+    private lateinit var viewLogsButton: Button
     private lateinit var statusTextView: TextView
     private lateinit var logTextView: TextView
     private lateinit var logScrollView: ScrollView
-    private lateinit var autoScrollCheckBox: CheckBox
 
     private var isStreaming = false
     private val handler = Handler(Looper.getMainLooper())
@@ -27,20 +28,12 @@ class MainActivity : AppCompatActivity() {
     private val logUpdater = object : Runnable {
         override fun run() {
             synchronized(StreamingService.logBuffer) {
-                val currentText = logTextView.text.toString()
                 val logBuilder = StringBuilder()
                 for (log in StreamingService.logBuffer) {
                     logBuilder.append(log).append("\n")
                 }
-                val newText = logBuilder.toString()
-                
-                // Aktualizuj tylko jeśli tekst się zmienił
-                if (currentText != newText) {
-                    logTextView.text = newText
-                    if (autoScrollCheckBox.isChecked) {
-                        logScrollView.post { logScrollView.fullScroll(ScrollView.FOCUS_DOWN) }
-                    }
-                }
+                logTextView.text = logBuilder.toString()
+                logScrollView.post { logScrollView.fullScroll(ScrollView.FOCUS_DOWN) }
             }
             handler.postDelayed(this, 1000)
         }
@@ -54,11 +47,10 @@ class MainActivity : AppCompatActivity() {
         rtspEditText = findViewById(R.id.rtspEditText)
         rtmpEditText = findViewById(R.id.rtmpEditText)
         startButton = findViewById(R.id.startStreamButton)
-        copyLogsButton = findViewById(R.id.copyLogsButton)
+        viewLogsButton = findViewById(R.id.viewLogsButton)
         statusTextView = findViewById(R.id.statusTextView)
         logTextView = findViewById(R.id.logTextView)
         logScrollView = findViewById(R.id.logScrollView)
-        autoScrollCheckBox = findViewById(R.id.autoScrollCheckBox)
 
         rtspEditText.setText(prefs.getString("last_rtsp", ""))
         rtmpEditText.setText(prefs.getString("last_rtmp", ""))
@@ -67,11 +59,33 @@ class MainActivity : AppCompatActivity() {
             if (isStreaming) stopStreaming() else startStreaming()
         }
 
-        copyLogsButton.setOnClickListener {
-            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-            clipboard.setPrimaryClip(ClipData.newPlainText("FFmpeg Logs", logTextView.text))
-            Toast.makeText(this, "Skopiowano", Toast.LENGTH_SHORT).show()
-        }
+        viewLogsButton.setOnClickListener { showLogsList() }
+    }
+
+    private fun showLogsList() {
+        val logDir = File(filesDir, "logs")
+        if (!logDir.exists()) logDir.mkdir()
+        val files = logDir.listFiles() ?: arrayOf()
+        val fileNames = files.map { it.name }.toTypedArray()
+
+        AlertDialog.Builder(this)
+            .setTitle("Wybierz log")
+            .setItems(fileNames) { _, which ->
+                val content = files[which].readText()
+                showLogContent(fileNames[which], content)
+            }
+            .show()
+    }
+
+    private fun showLogContent(fileName: String, content: String) {
+        val textView = TextView(this)
+        textView.text = content
+        textView.setPadding(16, 16, 16, 16)
+        AlertDialog.Builder(this)
+            .setTitle(fileName)
+            .setView(ScrollView(this).apply { addView(textView) })
+            .setPositiveButton("Zamknij", null)
+            .show()
     }
 
     override fun onResume() {
@@ -94,10 +108,12 @@ class MainActivity : AppCompatActivity() {
 
         prefs.edit().putString("last_rtsp", rtsp).putString("last_rtmp", rtmp).apply()
         
+        val logFileName = "log_${System.currentTimeMillis()}.txt"
         val intent = Intent(this, StreamingService::class.java).apply {
             action = StreamingService.ACTION_START
             putExtra(StreamingService.EXTRA_RTSP, rtsp)
             putExtra(StreamingService.EXTRA_RTMP, rtmp)
+            putExtra(StreamingService.EXTRA_LOG_FILE, logFileName)
         }
         startForegroundService(intent)
         isStreaming = true
