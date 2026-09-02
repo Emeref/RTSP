@@ -7,7 +7,9 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.net.wifi.WifiManager
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import com.arthenica.ffmpegkit.FFmpegKit
@@ -28,6 +30,7 @@ class StreamingService : Service() {
         const val EXTRA_RTSP = "EXTRA_RTSP"
         const val EXTRA_RTMP = "EXTRA_RTMP"
         const val EXTRA_LOG_FILE = "EXTRA_LOG_FILE"
+        const val EXTRA_AUTO_RESTART = "EXTRA_AUTO_RESTART"
         
         private const val MAX_LOGS = 50
         val logBuffer = ArrayDeque<String>(MAX_LOGS)
@@ -47,6 +50,19 @@ class StreamingService : Service() {
     private var logFile: File? = null
     private var frameCount = 0
     private val dateFormat = SimpleDateFormat("HH:mm:ss", Locale.US)
+
+    private var autoRestartEnabled = false
+    private var savedRtspUrl = ""
+    private var savedRtmpUrl = ""
+    private val handler = Handler(Looper.getMainLooper())
+    private val CHECK_INTERVAL = 5 * 60 * 1000L // 5 minut
+
+    private val checkRunnable = object : Runnable {
+        override fun run() {
+            checkStreamHealth()
+            handler.postDelayed(this, CHECK_INTERVAL)
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -78,8 +94,10 @@ class StreamingService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_START -> {
-                val rtspUrl = intent.getStringExtra(EXTRA_RTSP) ?: ""
-                val rtmpUrl = intent.getStringExtra(EXTRA_RTMP) ?: ""
+                savedRtspUrl = intent.getStringExtra(EXTRA_RTSP) ?: ""
+                savedRtmpUrl = intent.getStringExtra(EXTRA_RTMP) ?: ""
+                autoRestartEnabled = intent.getBooleanExtra(EXTRA_AUTO_RESTART, false)
+                
                 val logFileName = intent.getStringExtra(EXTRA_LOG_FILE) ?: "log.txt"
                 val dir = File(filesDir, "logs")
                 if (!dir.exists()) dir.mkdir()
@@ -89,12 +107,27 @@ class StreamingService : Service() {
                 acquireLocks()
                 startForegroundServiceWithNotification()
                 
+                if (autoRestartEnabled) {
+                    handler.postDelayed(checkRunnable, CHECK_INTERVAL)
+                }
+
                 writeLog("START: Streaming rozpoczęty")
-                startFFmpeg(rtspUrl, rtmpUrl)
+                startFFmpeg(savedRtspUrl, savedRtmpUrl)
             }
             ACTION_STOP -> stopStreaming()
         }
         return START_NOT_STICKY
+    }
+
+    private fun checkStreamHealth() {
+        val isRunning = FFmpegKit.listSessions().any { it.state == com.arthenica.ffmpegkit.SessionState.RUNNING }
+        
+        if (!isRunning) {
+            writeLog("WATCHDOG: Stream padł! Restartowanie...")
+            startFFmpeg(savedRtspUrl, savedRtmpUrl)
+        } else {
+            writeLog("WATCHDOG: Stream aktywny.")
+        }
     }
 
     @SuppressLint("WakelockTimeout")
@@ -122,14 +155,13 @@ class StreamingService : Service() {
             } else {
                 writeLog("STOP: Błąd streamingu: ${session.failStackTrace?.take(100)}")
             }
-            stopForeground(STOP_FOREGROUND_REMOVE)
-            stopSelf()
         }.start()
     }
 
     private fun stopStreaming() {
         FFmpegKit.cancel()
         releaseLocks()
+        handler.removeCallbacks(checkRunnable)
         writeLog("STOP: Zatrzymano ręcznie")
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
@@ -154,6 +186,7 @@ class StreamingService : Service() {
 
     override fun onDestroy() {
         releaseLocks()
+        handler.removeCallbacks(checkRunnable)
         super.onDestroy()
     }
     override fun onBind(intent: Intent?): IBinder? = null

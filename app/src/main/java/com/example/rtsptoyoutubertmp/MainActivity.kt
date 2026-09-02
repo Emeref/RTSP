@@ -10,11 +10,15 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import com.google.android.material.textfield.TextInputEditText
 import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var rtspEditText: TextInputEditText
     private lateinit var rtmpEditText: TextInputEditText
+    private lateinit var autoRestartCheckBox: CheckBox
     private lateinit var startButton: Button
     private lateinit var viewLogsButton: Button
     private lateinit var statusTextView: TextView
@@ -46,6 +50,7 @@ class MainActivity : AppCompatActivity() {
 
         rtspEditText = findViewById(R.id.rtspEditText)
         rtmpEditText = findViewById(R.id.rtmpEditText)
+        autoRestartCheckBox = findViewById(R.id.cbAutoRestart)
         startButton = findViewById(R.id.startStreamButton)
         viewLogsButton = findViewById(R.id.viewLogsButton)
         statusTextView = findViewById(R.id.statusTextView)
@@ -54,6 +59,7 @@ class MainActivity : AppCompatActivity() {
 
         rtspEditText.setText(prefs.getString("last_rtsp", ""))
         rtmpEditText.setText(prefs.getString("last_rtmp", ""))
+        autoRestartCheckBox.isChecked = prefs.getBoolean("last_auto_restart", false)
 
         startButton.setOnClickListener {
             if (isStreaming) stopStreaming() else startStreaming()
@@ -101,19 +107,27 @@ class MainActivity : AppCompatActivity() {
     private fun startStreaming() {
         val rtsp = rtspEditText.text.toString()
         val rtmp = rtmpEditText.text.toString()
+        val autoRestart = autoRestartCheckBox.isChecked
         if (rtsp.isEmpty() || rtmp.isEmpty()) {
             Toast.makeText(this, "Podaj URL", Toast.LENGTH_SHORT).show()
             return
         }
 
-        prefs.edit().putString("last_rtsp", rtsp).putString("last_rtmp", rtmp).apply()
+        prefs.edit()
+            .putString("last_rtsp", rtsp)
+            .putString("last_rtmp", rtmp)
+            .putBoolean("last_auto_restart", autoRestart)
+            .apply()
         
-        val logFileName = "log_${System.currentTimeMillis()}.txt"
+        val fileNameFormat = SimpleDateFormat("yyyy-MM-dd HH-mm", Locale.getDefault())
+        val logFileName = "log_${fileNameFormat.format(Date())}.txt"
+
         val intent = Intent(this, StreamingService::class.java).apply {
             action = StreamingService.ACTION_START
             putExtra(StreamingService.EXTRA_RTSP, rtsp)
             putExtra(StreamingService.EXTRA_RTMP, rtmp)
             putExtra(StreamingService.EXTRA_LOG_FILE, logFileName)
+            putExtra(StreamingService.EXTRA_AUTO_RESTART, autoRestart)
         }
         startForegroundService(intent)
         isStreaming = true
