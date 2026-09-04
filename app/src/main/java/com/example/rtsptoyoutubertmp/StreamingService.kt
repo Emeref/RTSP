@@ -49,6 +49,7 @@ class StreamingService : Service() {
     private var wifiLock: WifiManager.WifiLock? = null
     private var logFile: File? = null
     private var frameCount = 0
+    private var lastFrameTime = System.currentTimeMillis()
     private val dateFormat = SimpleDateFormat("HH:mm:ss", Locale.US)
 
     private var autoRestartEnabled = false
@@ -71,13 +72,14 @@ class StreamingService : Service() {
         FFmpegKitConfig.enableLogCallback { log ->
             val msg = log.message ?: ""
             
-            if (msg.contains("Stream mapping") || msg.contains("Opening")) {
-                writeLog("START: $msg")
-            } else if (msg.contains("frame=")) {
+            if (msg.contains("frame=")) {
+                lastFrameTime = System.currentTimeMillis()
                 if (frameCount < 10) {
                     writeLog("FRAME: $msg")
                     frameCount++
                 }
+            } else if (msg.contains("Stream mapping") || msg.contains("Opening")) {
+                writeLog("START: $msg")
             } else if (log.level == Level.AV_LOG_ERROR) {
                 writeLog("ERROR: $msg")
             }
@@ -103,6 +105,7 @@ class StreamingService : Service() {
                 if (!dir.exists()) dir.mkdir()
                 logFile = File(dir, logFileName)
                 frameCount = 0
+                lastFrameTime = System.currentTimeMillis()
                 
                 acquireLocks()
                 startForegroundServiceWithNotification()
@@ -120,13 +123,20 @@ class StreamingService : Service() {
     }
 
     private fun checkStreamHealth() {
+        val currentTime = System.currentTimeMillis()
+        val timeSinceLastFrame = currentTime - lastFrameTime
+        
+        // Jeśli nie było ramek przez 2 minuty, uznajemy stream za zawieszony
+        val isFrozen = timeSinceLastFrame > 2 * 60 * 1000 
         val isRunning = FFmpegKit.listSessions().any { it.state == com.arthenica.ffmpegkit.SessionState.RUNNING }
         
-        if (!isRunning) {
-            writeLog("WATCHDOG: Stream padł! Restartowanie...")
+        if (!isRunning || isFrozen) {
+            writeLog("WATCHDOG: Stream padł (Running: $isRunning, Frozen: $isFrozen)! Restartowanie...")
+            FFmpegKit.cancel()
+            lastFrameTime = System.currentTimeMillis()
             startFFmpeg(savedRtspUrl, savedRtmpUrl)
         } else {
-            writeLog("WATCHDOG: Stream aktywny.")
+            writeLog("WATCHDOG: Stream aktywny. Ostatnia ramka: ${timeSinceLastFrame / 1000}s temu.")
         }
     }
 
