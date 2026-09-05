@@ -21,6 +21,8 @@ import java.util.ArrayDeque
 import java.util.Date
 import java.util.Locale
 
+data class StreamTask(val startTimeMillis: Long, val durationMillis: Long)
+
 class StreamingService : Service() {
 
     companion object {
@@ -30,7 +32,7 @@ class StreamingService : Service() {
         const val EXTRA_RTSP = "EXTRA_RTSP"
         const val EXTRA_RTMP = "EXTRA_RTMP"
         const val EXTRA_LOG_FILE = "EXTRA_LOG_FILE"
-        const val EXTRA_AUTO_RESTART = "EXTRA_AUTO_RESTART"
+        const val EXTRA_TASKS = "EXTRA_TASKS" // List of "startTime:duration"
         
         private const val MAX_LOGS = 50
         val logBuffer = ArrayDeque<String>(MAX_LOGS)
@@ -48,20 +50,27 @@ class StreamingService : Service() {
     private var wakeLock: PowerManager.WakeLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
     private var logFile: File? = null
-    private var frameCount = 0
-    private var lastFrameTime = System.currentTimeMillis()
     private val dateFormat = SimpleDateFormat("HH:mm:ss", Locale.US)
 
-    private var autoRestartEnabled = false
     private var savedRtspUrl = ""
     private var savedRtmpUrl = ""
     private val handler = Handler(Looper.getMainLooper())
-    private val CHECK_INTERVAL = 5 * 60 * 1000L // 5 minut
+    private val scheduledTasks = mutableListOf<StreamTask>()
+    private var isStreaming = false
 
-    private val checkRunnable = object : Runnable {
+    private val schedulerRunnable = object : Runnable {
         override fun run() {
-            checkStreamHealth()
-            handler.postDelayed(this, CHECK_INTERVAL)
+            val now = System.currentTimeMillis()
+            
+            if (!isStreaming) {
+                val nextTask = scheduledTasks.find { 
+                    now >= it.startTimeMillis && now < (it.startTimeMillis + it.durationMillis) 
+                }
+                if (nextTask != null) {
+                    startStreamingTask(nextTask)
+                }
+            }
+            handler.postDelayed(this, 10000)
         }
     }
 
@@ -69,21 +78,6 @@ class StreamingService : Service() {
         super.onCreate()
         createNotificationChannel()
         FFmpegKitConfig.setLogLevel(Level.AV_LOG_INFO)
-        FFmpegKitConfig.enableLogCallback { log ->
-            val msg = log.message ?: ""
-            
-            if (msg.contains("frame=")) {
-                lastFrameTime = System.currentTimeMillis()
-                if (frameCount < 10) {
-                    writeLog("FRAME: $msg")
-                    frameCount++
-                }
-            } else if (msg.contains("Stream mapping") || msg.contains("Opening")) {
-                writeLog("START: $msg")
-            } else if (log.level == Level.AV_LOG_ERROR) {
-                writeLog("ERROR: $msg")
-            }
-        }
     }
 
     private fun writeLog(msg: String) {
@@ -98,46 +92,44 @@ class StreamingService : Service() {
             ACTION_START -> {
                 savedRtspUrl = intent.getStringExtra(EXTRA_RTSP) ?: ""
                 savedRtmpUrl = intent.getStringExtra(EXTRA_RTMP) ?: ""
-                autoRestartEnabled = intent.getBooleanExtra(EXTRA_AUTO_RESTART, false)
+                
+                val tasks = intent.getStringArrayListExtra(EXTRA_TASKS) ?: arrayListOf()
+                scheduledTasks.clear()
+                tasks.forEach { 
+                    val parts = it.split(":")
+                    if (parts.size == 2) {
+                        scheduledTasks.add(StreamTask(parts[0].toLong(), parts[1].toLong()))
+                    }
+                }
                 
                 val logFileName = intent.getStringExtra(EXTRA_LOG_FILE) ?: "log.txt"
                 val dir = File(filesDir, "logs")
                 if (!dir.exists()) dir.mkdir()
                 logFile = File(dir, logFileName)
-                frameCount = 0
-                lastFrameTime = System.currentTimeMillis()
                 
                 acquireLocks()
                 startForegroundServiceWithNotification()
                 
-                if (autoRestartEnabled) {
-                    handler.postDelayed(checkRunnable, CHECK_INTERVAL)
-                }
-
-                writeLog("START: Streaming rozpoczęty")
-                startFFmpeg(savedRtspUrl, savedRtmpUrl)
+                handler.post(schedulerRunnable)
+                writeLog("START: Serwis uruchomiony, harmonogram: ${scheduledTasks.size} zadań")
             }
             ACTION_STOP -> stopStreaming()
         }
         return START_NOT_STICKY
     }
 
-    private fun checkStreamHealth() {
-        val currentTime = System.currentTimeMillis()
-        val timeSinceLastFrame = currentTime - lastFrameTime
+    private fun startStreamingTask(task: StreamTask) {
+        isStreaming = true
+        writeLog("START: Rozpoczynam stream, czas trwania: ${task.durationMillis / 60000} min")
+        startFFmpeg(savedRtspUrl, savedRtmpUrl)
         
-        // Jeśli nie było ramek przez 2 minuty, uznajemy stream za zawieszony
-        val isFrozen = timeSinceLastFrame > 2 * 60 * 1000 
-        val isRunning = FFmpegKit.listSessions().any { it.state == com.arthenica.ffmpegkit.SessionState.RUNNING }
-        
-        if (!isRunning || isFrozen) {
-            writeLog("WATCHDOG: Stream padł (Running: $isRunning, Frozen: $isFrozen)! Restartowanie...")
-            FFmpegKit.cancel()
-            lastFrameTime = System.currentTimeMillis()
-            startFFmpeg(savedRtspUrl, savedRtmpUrl)
-        } else {
-            writeLog("WATCHDOG: Stream aktywny. Ostatnia ramka: ${timeSinceLastFrame / 1000}s temu.")
-        }
+        handler.postDelayed({
+            if (isStreaming) {
+                stopStreamingInternal()
+                isStreaming = false
+                writeLog("STOP: Zakończono sesję zgodnie z harmonogramem")
+            }
+        }, task.durationMillis)
     }
 
     @SuppressLint("WakelockTimeout")
@@ -159,19 +151,18 @@ class StreamingService : Service() {
         val ffmpegCommand = "-re -rtsp_transport tcp -i \"$rtspUrl\" -f lavfi -i anullsrc=channel_layout=stereo:sample_rate=44100 -c:v libx264 -preset veryfast -b:v 8000k -maxrate 8000k -bufsize 16000k -pix_fmt yuv420p -g 50 -c:a aac -b:a 128k -map 0:v -map 1:a -shortest -f flv \"$rtmpUrl\""
         
         Thread {
-            val session = FFmpegKit.execute(ffmpegCommand)
-            if (session.returnCode.isValueSuccess) {
-                writeLog("STOP: Streaming zakończony pomyślnie")
-            } else {
-                writeLog("STOP: Błąd streamingu: ${session.failStackTrace?.take(100)}")
-            }
+            FFmpegKit.execute(ffmpegCommand)
         }.start()
     }
 
-    private fun stopStreaming() {
+    private fun stopStreamingInternal() {
         FFmpegKit.cancel()
+    }
+
+    private fun stopStreaming() {
+        stopStreamingInternal()
         releaseLocks()
-        handler.removeCallbacks(checkRunnable)
+        handler.removeCallbacks(schedulerRunnable)
         writeLog("STOP: Zatrzymano ręcznie")
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
@@ -196,7 +187,7 @@ class StreamingService : Service() {
 
     override fun onDestroy() {
         releaseLocks()
-        handler.removeCallbacks(checkRunnable)
+        handler.removeCallbacks(schedulerRunnable)
         super.onDestroy()
     }
     override fun onBind(intent: Intent?): IBinder? = null
