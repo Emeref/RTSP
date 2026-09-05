@@ -5,6 +5,7 @@ import android.app.AlarmManager
 import android.app.PendingIntent
 import android.app.TimePickerDialog
 import android.content.*
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -25,6 +26,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var rtspEditText: TextInputEditText
     private lateinit var rtmpEditText: TextInputEditText
     private lateinit var startButton: Button
+    private lateinit var stopStreamButton: Button
     private lateinit var tasksContainer: LinearLayout
     private lateinit var statusTextView: TextView
     private lateinit var logTextView: TextView
@@ -34,6 +36,13 @@ class MainActivity : AppCompatActivity() {
     private val handler = Handler(Looper.getMainLooper())
     private val prefs by lazy { getSharedPreferences("streaming_prefs", Context.MODE_PRIVATE) }
     private val timeFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
+
+    private val serviceStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            val isStreaming = intent?.getBooleanExtra("is_streaming", false) ?: false
+            stopStreamButton.isEnabled = isStreaming
+        }
+    }
 
     private val logUpdater = object : Runnable {
         override fun run() {
@@ -56,6 +65,8 @@ class MainActivity : AppCompatActivity() {
         rtspEditText = findViewById(R.id.rtspEditText)
         rtmpEditText = findViewById(R.id.rtmpEditText)
         startButton = findViewById(R.id.startStreamButton)
+        stopStreamButton = findViewById(R.id.stopStreamButton)
+        stopStreamButton.isEnabled = false
         tasksContainer = findViewById(R.id.tasksContainer)
         statusTextView = findViewById(R.id.statusTextView)
         logTextView = findViewById(R.id.logTextView)
@@ -76,10 +87,29 @@ class MainActivity : AppCompatActivity() {
             logAction("Kliknięto: ${startButton.text}")
             if (isScheduled) stopAll() else scheduleStreaming() 
         }
+        stopStreamButton.setOnClickListener {
+            logAction("Kliknięto: Stop Stream (Force)")
+            // Wysyłamy komendę zatrzymania do serwisu
+            startService(Intent(this, StreamingService::class.java).apply { action = StreamingService.ACTION_STOP })
+        }
         findViewById<Button>(R.id.viewLogsButton).setOnClickListener { 
             logAction("Kliknięto: Przeglądaj logi")
             showLogsList() 
         }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(serviceStateReceiver, IntentFilter("com.example.rtsptoyoutubertmp.STREAM_STATE"), Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(serviceStateReceiver, IntentFilter("com.example.rtsptoyoutubertmp.STREAM_STATE"))
+        }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        unregisterReceiver(serviceStateReceiver)
     }
 
     private fun logAction(msg: String) {
@@ -222,7 +252,7 @@ class MainActivity : AppCompatActivity() {
             alarmManager.cancel(pendingIntent)
         }
         
-        stopService(Intent(this, StreamingService::class.java))
+        startService(Intent(this, StreamingService::class.java).apply { action = StreamingService.ACTION_STOP })
         
         isScheduled = false
         startButton.text = "START STREAMING"

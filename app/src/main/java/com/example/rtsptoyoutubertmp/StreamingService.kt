@@ -32,7 +32,7 @@ class StreamingService : Service() {
         const val EXTRA_RTSP = "EXTRA_RTSP"
         const val EXTRA_RTMP = "EXTRA_RTMP"
         const val EXTRA_LOG_FILE = "EXTRA_LOG_FILE"
-        const val EXTRA_TASKS = "EXTRA_TASKS" // List of "startTime:duration"
+        const val EXTRA_TASKS = "EXTRA_TASKS"
         
         private const val MAX_LOGS = 50
         val logBuffer = ArrayDeque<String>(MAX_LOGS)
@@ -57,6 +57,14 @@ class StreamingService : Service() {
     private val handler = Handler(Looper.getMainLooper())
     private val scheduledTasks = mutableListOf<StreamTask>()
     private var isStreaming = false
+    private var currentSessionId: Long? = null
+
+    private fun sendStateBroadcast(streaming: Boolean) {
+        val intent = Intent("com.example.rtsptoyoutubertmp.STREAM_STATE")
+        intent.putExtra("is_streaming", streaming)
+        intent.setPackage(packageName)
+        sendBroadcast(intent)
+    }
 
     private val schedulerRunnable = object : Runnable {
         override fun run() {
@@ -120,6 +128,7 @@ class StreamingService : Service() {
 
     private fun startStreamingTask(task: StreamTask) {
         isStreaming = true
+        sendStateBroadcast(true)
         writeLog("START: Rozpoczynam stream, czas trwania: ${task.durationMillis / 60000} min")
         startFFmpeg(savedRtspUrl, savedRtmpUrl)
         
@@ -127,6 +136,7 @@ class StreamingService : Service() {
             if (isStreaming) {
                 stopStreamingInternal()
                 isStreaming = false
+                sendStateBroadcast(false)
                 writeLog("STOP: Zakończono sesję zgodnie z harmonogramem")
             }
         }, task.durationMillis)
@@ -150,17 +160,27 @@ class StreamingService : Service() {
     private fun startFFmpeg(rtspUrl: String, rtmpUrl: String) {
         val ffmpegCommand = "-re -rtsp_transport tcp -i \"$rtspUrl\" -f lavfi -i anullsrc=channel_layout=stereo:sample_rate=44100 -c:v libx264 -preset veryfast -b:v 8000k -maxrate 8000k -bufsize 16000k -pix_fmt yuv420p -g 50 -c:a aac -b:a 128k -map 0:v -map 1:a -shortest -f flv \"$rtmpUrl\""
         
-        Thread {
-            FFmpegKit.execute(ffmpegCommand)
-        }.start()
+        val session = FFmpegKit.executeAsync(ffmpegCommand) { session ->
+            writeLog("FFmpeg finished with state ${session.state}")
+            isStreaming = false
+            sendStateBroadcast(false)
+        }
+        currentSessionId = session.sessionId
+        writeLog("FFmpeg session started with ID: $currentSessionId")
     }
 
     private fun stopStreamingInternal() {
-        FFmpegKit.cancel()
+        writeLog("Zatrzymywanie sesji FFmpeg...")
+        currentSessionId?.let {
+            FFmpegKit.cancel(it)
+        }
+        FFmpegKit.cancel() // Dodatkowe upewnienie się
     }
 
     private fun stopStreaming() {
         stopStreamingInternal()
+        isStreaming = false
+        sendStateBroadcast(false)
         releaseLocks()
         handler.removeCallbacks(schedulerRunnable)
         writeLog("STOP: Zatrzymano ręcznie")
@@ -188,6 +208,7 @@ class StreamingService : Service() {
     override fun onDestroy() {
         releaseLocks()
         handler.removeCallbacks(schedulerRunnable)
+        sendStateBroadcast(false)
         super.onDestroy()
     }
     override fun onBind(intent: Intent?): IBinder? = null
