@@ -164,7 +164,32 @@ class MainActivity : AppCompatActivity() {
         statusTextView.text = "Status: Zatrzymano"
     }
     
-    private fun showLogsList() { /* ... */ }
+    private fun showLogsList() {
+        val logDir = File(filesDir, "logs")
+        if (!logDir.exists()) logDir.mkdir()
+        val files = logDir.listFiles() ?: arrayOf()
+        val fileNames = files.map { it.name }.toTypedArray()
+
+        AlertDialog.Builder(this)
+            .setTitle("Wybierz log")
+            .setItems(fileNames) { _, which ->
+                val content = files[which].readText()
+                showLogContent(fileNames[which], content)
+            }
+            .show()
+    }
+
+    private fun showLogContent(fileName: String, content: String) {
+        val textView = TextView(this)
+        textView.text = content
+        textView.setPadding(16, 16, 16, 16)
+        AlertDialog.Builder(this)
+            .setTitle(fileName)
+            .setView(ScrollView(this).apply { addView(textView) })
+            .setPositiveButton("Zamknij", null)
+            .show()
+    }
+
     override fun onResume() { super.onResume(); handler.post(logUpdater) }
     override fun onPause() { super.onPause(); handler.removeCallbacks(logUpdater) }
 }
