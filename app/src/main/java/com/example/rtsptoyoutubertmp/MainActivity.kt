@@ -1,6 +1,8 @@
 package com.example.rtsptoyoutubertmp
 
 import android.annotation.SuppressLint
+import android.app.AlarmManager
+import android.app.PendingIntent
 import android.app.TimePickerDialog
 import android.content.*
 import android.os.Bundle
@@ -26,7 +28,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var logTextView: TextView
     private lateinit var logScrollView: ScrollView
 
-    private var isStreaming = false
+    private var isScheduled = false
     private val handler = Handler(Looper.getMainLooper())
     private val prefs by lazy { getSharedPreferences("streaming_prefs", Context.MODE_PRIVATE) }
 
@@ -61,7 +63,7 @@ class MainActivity : AppCompatActivity() {
         loadSavedTasks()
 
         findViewById<Button>(R.id.btnAddTask).setOnClickListener { addTaskRow(null, null) }
-        startButton.setOnClickListener { if (isStreaming) stopStreaming() else startStreaming() }
+        startButton.setOnClickListener { if (isScheduled) stopAll() else scheduleStreaming() }
         findViewById<Button>(R.id.viewLogsButton).setOnClickListener { showLogsList() }
     }
 
@@ -117,53 +119,64 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun startStreaming() {
+    @SuppressLint("ScheduleExactAlarm")
+    private fun scheduleStreaming() {
         val rtsp = rtspEditText.text.toString()
         val rtmp = rtmpEditText.text.toString()
-        val tasks = arrayListOf<String>()
+        val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
+
+        val now = Calendar.getInstance()
 
         for (i in 0 until tasksContainer.childCount) {
             val row = tasksContainer.getChildAt(i) as LinearLayout
             val btn = row.getChildAt(0) as Button
             val edit = row.getChildAt(1) as EditText
-            if (btn.tag != null && edit.text.isNotEmpty()) {
-                val start = btn.tag as Long
-                val dur = edit.text.toString().toLong() * 60000
-                tasks.add("$start:$dur")
+            val timeMillis = btn.tag as? Long ?: continue
+            val dur = edit.text.toString().toLong() * 60000
+
+            val scheduledTime = Calendar.getInstance().apply {
+                timeInMillis = timeMillis
             }
-        }
 
-        if (rtsp.isEmpty() || rtmp.isEmpty() || tasks.isEmpty()) {
-            Toast.makeText(this, "Wypełnij URL i dodaj zadania", Toast.LENGTH_SHORT).show()
-            return
-        }
+            // Jeśli czas już minął dzisiaj, ustawiamy na jutro
+            if (scheduledTime.before(now)) {
+                scheduledTime.add(Calendar.DAY_OF_YEAR, 1)
+            }
 
-        prefs.edit()
-            .putString("last_rtsp", rtsp)
-            .putString("last_rtmp", rtmp)
-            .apply()
+            val intent = Intent(this, AlarmReceiver::class.java).apply {
+                putExtra(StreamingService.EXTRA_RTSP, rtsp)
+                putExtra(StreamingService.EXTRA_RTMP, rtmp)
+                putExtra("EXTRA_DURATION", dur)
+                putExtra(StreamingService.EXTRA_LOG_FILE, "log_${SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())}.txt")
+            }
+
+            val pendingIntent = PendingIntent.getBroadcast(this, i, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+            alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, scheduledTime.timeInMillis, pendingIntent)
+        }
+        
+        isScheduled = true
+        startButton.text = "STOP HARMONOGRAM"
+        Toast.makeText(this, "Zaplanowano zadania", Toast.LENGTH_SHORT).show()
         saveTasks()
-
-        val logFileName = "log_${SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())}.txt"
-        startForegroundService(Intent(this, StreamingService::class.java).apply {
-            action = StreamingService.ACTION_START
-            putExtra(StreamingService.EXTRA_RTSP, rtsp)
-            putExtra(StreamingService.EXTRA_RTMP, rtmp)
-            putExtra(StreamingService.EXTRA_LOG_FILE, logFileName)
-            putStringArrayListExtra(StreamingService.EXTRA_TASKS, tasks)
-        })
-        isStreaming = true
-        startButton.text = "Stop Streaming"
-        statusTextView.text = "Status: Uruchomiono"
+        statusTextView.text = "Status: Zaplanowano"
     }
 
-    private fun stopStreaming() {
-        startService(Intent(this, StreamingService::class.java).apply { action = StreamingService.ACTION_STOP })
-        isStreaming = false
-        startButton.text = "Start Streaming"
+    private fun stopAll() {
+        val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        for (i in 0 until tasksContainer.childCount) {
+            val intent = Intent(this, AlarmReceiver::class.java)
+            val pendingIntent = PendingIntent.getBroadcast(this, i, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+            alarmManager.cancel(pendingIntent)
+        }
+        
+        stopService(Intent(this, StreamingService::class.java))
+        
+        isScheduled = false
+        startButton.text = "START STREAMING"
         statusTextView.text = "Status: Zatrzymano"
+        Toast.makeText(this, "Harmonogram i serwis zatrzymany", Toast.LENGTH_SHORT).show()
     }
-    
+
     private fun showLogsList() {
         val logDir = File(filesDir, "logs")
         if (!logDir.exists()) logDir.mkdir()
