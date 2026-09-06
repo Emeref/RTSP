@@ -52,7 +52,6 @@ class MainActivity : AppCompatActivity() {
                     logBuilder.append(log).append("\n")
                 }
                 logTextView.text = logBuilder.toString()
-                logScrollView.post { logScrollView.fullScroll(ScrollView.FOCUS_DOWN) }
             }
             handler.postDelayed(this, 1000)
         }
@@ -217,7 +216,6 @@ class MainActivity : AppCompatActivity() {
             val dur = edit.text.toString().toLong() * 60000
 
             val scheduledTime = Calendar.getInstance().apply { timeInMillis = timeMillis }
-            if (scheduledTime.before(now)) scheduledTime.add(Calendar.DAY_OF_YEAR, 1)
             
             taskDetails.add("${btn.text} (${edit.text} min)")
             if (scheduledTime.timeInMillis < soonestTaskTime) soonestTaskTime = scheduledTime.timeInMillis
@@ -230,7 +228,13 @@ class MainActivity : AppCompatActivity() {
             }
 
             val pendingIntent = PendingIntent.getBroadcast(this, i, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-            alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, scheduledTime.timeInMillis, pendingIntent)
+            // Używamy setRepeating dla powtarzania codziennego
+            alarmManager.setRepeating(
+                AlarmManager.RTC_WAKEUP,
+                scheduledTime.timeInMillis,
+                AlarmManager.INTERVAL_DAY,
+                pendingIntent
+            )
         }
         
         val diffMin = (soonestTaskTime - now.timeInMillis) / 60000
