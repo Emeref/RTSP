@@ -88,7 +88,6 @@ class MainActivity : AppCompatActivity() {
         }
         stopStreamButton.setOnClickListener {
             logAction("Kliknięto: Stop Stream (Force)")
-            // Wysyłamy komendę zatrzymania do serwisu
             startService(Intent(this, StreamingService::class.java).apply { action = StreamingService.ACTION_STOP })
         }
         findViewById<Button>(R.id.viewLogsButton).setOnClickListener { 
@@ -112,8 +111,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun logAction(msg: String) {
-        val timestamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())
-        StreamingService.addLog("[$timestamp] UI: $msg")
+        StreamingService.addLog(this, "UI: $msg")
     }
 
     private fun setupLinkLogging(edit: TextInputEditText, name: String) {
@@ -200,57 +198,57 @@ class MainActivity : AppCompatActivity() {
 
     @SuppressLint("ScheduleExactAlarm")
     private fun scheduleStreaming() {
+        stopAll() 
+        saveTasks()
+
         val rtsp = rtspEditText.text.toString()
         val rtmp = rtmpEditText.text.toString()
         val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
         val now = Calendar.getInstance()
         
         val taskDetails = mutableListOf<String>()
-        var soonestTaskTime: Long = Long.MAX_VALUE
 
         for (i in 0 until tasksContainer.childCount) {
             val row = tasksContainer.getChildAt(i) as LinearLayout
             val btn = row.getChildAt(0) as Button
             val edit = row.getChildAt(1) as EditText
             val timeMillis = btn.tag as? Long ?: continue
-            val dur = edit.text.toString().toLong() * 60000
+            val dur = (edit.text.toString().toLongOrNull() ?: 0L) * 60000
 
-            val scheduledTime = Calendar.getInstance().apply { timeInMillis = timeMillis }
+            val scheduledTime = Calendar.getInstance().apply { 
+                timeInMillis = timeMillis 
+                if (before(now)) {
+                    add(Calendar.DAY_OF_YEAR, 1)
+                }
+            }
             
             taskDetails.add("${btn.text} (${edit.text} min)")
-            if (scheduledTime.timeInMillis < soonestTaskTime) soonestTaskTime = scheduledTime.timeInMillis
 
             val intent = Intent(this, AlarmReceiver::class.java).apply {
                 putExtra(StreamingService.EXTRA_RTSP, rtsp)
                 putExtra(StreamingService.EXTRA_RTMP, rtmp)
                 putExtra("EXTRA_DURATION", dur)
-                putExtra(StreamingService.EXTRA_LOG_FILE, "log_${SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())}.txt")
             }
 
             val pendingIntent = PendingIntent.getBroadcast(this, i, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-            // Używamy setRepeating dla powtarzania codziennego
-            alarmManager.setRepeating(
+            alarmManager.setExactAndAllowWhileIdle(
                 AlarmManager.RTC_WAKEUP,
                 scheduledTime.timeInMillis,
-                AlarmManager.INTERVAL_DAY,
                 pendingIntent
             )
         }
         
-        val diffMin = (soonestTaskTime - now.timeInMillis) / 60000
-        logAction("START HARMONOGRAMU: Liczba zadań: ${taskDetails.size}, Godziny: ${taskDetails.joinToString()}, Do startu: $diffMin min")
+        logAction("START HARMONOGRAMU: Liczba zadań: ${taskDetails.size}, Godziny: ${taskDetails.joinToString()}")
         
         isScheduled = true
         startButton.text = "STOP HARMONOGRAM"
         Toast.makeText(this, "Zaplanowano zadania", Toast.LENGTH_SHORT).show()
-        saveTasks()
         statusTextView.text = "Status: Zaplanowano"
     }
 
     private fun stopAll() {
-        logAction("Kliknięto: Zatrzymano harmonogram")
         val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
-        for (i in 0 until tasksContainer.childCount) {
+        for (i in 0 until 50) { // Czyścimy z zapasem
             val intent = Intent(this, AlarmReceiver::class.java)
             val pendingIntent = PendingIntent.getBroadcast(this, i, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
             alarmManager.cancel(pendingIntent)
@@ -261,7 +259,6 @@ class MainActivity : AppCompatActivity() {
         isScheduled = false
         startButton.text = "START STREAMING"
         statusTextView.text = "Status: Zatrzymano"
-        Toast.makeText(this, "Harmonogram i serwis zatrzymany", Toast.LENGTH_SHORT).show()
     }
 
     private fun showLogsList() {

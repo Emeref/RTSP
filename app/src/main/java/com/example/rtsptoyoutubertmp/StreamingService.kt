@@ -21,8 +21,6 @@ import java.util.ArrayDeque
 import java.util.Date
 import java.util.Locale
 
-data class StreamTask(val startTimeMillis: Long, val durationMillis: Long)
-
 class StreamingService : Service() {
 
     companion object {
@@ -37,27 +35,30 @@ class StreamingService : Service() {
         private const val MAX_LOGS = 50
         val logBuffer = ArrayDeque<String>(MAX_LOGS)
 
-        fun addLog(message: String) {
+        fun addLog(context: Context, message: String) {
+            val timestamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())
+            val formatted = "[$timestamp] $message"
+            
             synchronized(logBuffer) {
                 if (logBuffer.size >= MAX_LOGS) {
                     logBuffer.pollFirst()
                 }
-                logBuffer.addLast(message)
+                logBuffer.addLast(formatted)
             }
+
+            // Zapis do pliku
+            val logDir = File(context.filesDir, "logs")
+            if (!logDir.exists()) logDir.mkdir()
+            val logFile = File(logDir, "log_${SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())}.txt")
+            logFile.appendText(formatted + "\n")
         }
     }
 
     private var wakeLock: PowerManager.WakeLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
-    private var logFile: File? = null
-    private val dateFormat = SimpleDateFormat("HH:mm:ss", Locale.US)
-
-    private var savedRtspUrl = ""
-    private var savedRtmpUrl = ""
-    private val handler = Handler(Looper.getMainLooper())
-    private val scheduledTasks = mutableListOf<StreamTask>()
     private var isStreaming = false
     private var currentSessionId: Long? = null
+    private val handler = Handler(Looper.getMainLooper())
 
     private fun sendStateBroadcast(streaming: Boolean) {
         val intent = Intent("com.example.rtsptoyoutubertmp.STREAM_STATE")
@@ -66,80 +67,46 @@ class StreamingService : Service() {
         sendBroadcast(intent)
     }
 
-    private val schedulerRunnable = object : Runnable {
-        override fun run() {
-            val now = System.currentTimeMillis()
-            
-            if (!isStreaming) {
-                val nextTask = scheduledTasks.find { 
-                    now >= it.startTimeMillis && now < (it.startTimeMillis + it.durationMillis) 
-                }
-                if (nextTask != null) {
-                    startStreamingTask(nextTask)
-                }
-            }
-            handler.postDelayed(this, 10000)
-        }
-    }
-
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
         FFmpegKitConfig.setLogLevel(Level.AV_LOG_INFO)
     }
 
-    private fun writeLog(msg: String) {
-        val formatted = "[${dateFormat.format(Date())}] $msg"
-        addLog(formatted)
-        logFile?.appendText(formatted + "\n")
-    }
-
     @SuppressLint("WakelockTimeout")
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_START -> {
-                savedRtspUrl = intent.getStringExtra(EXTRA_RTSP) ?: ""
-                savedRtmpUrl = intent.getStringExtra(EXTRA_RTMP) ?: ""
-                
-                val tasks = intent.getStringArrayListExtra(EXTRA_TASKS) ?: arrayListOf()
-                scheduledTasks.clear()
-                tasks.forEach { 
-                    val parts = it.split(":")
-                    if (parts.size == 2) {
-                        scheduledTasks.add(StreamTask(parts[0].toLong(), parts[1].toLong()))
-                    }
-                }
-                
-                val logFileName = intent.getStringExtra(EXTRA_LOG_FILE) ?: "log.txt"
-                val dir = File(filesDir, "logs")
-                if (!dir.exists()) dir.mkdir()
-                logFile = File(dir, logFileName)
+                val rtsp = intent.getStringExtra(EXTRA_RTSP) ?: ""
+                val rtmp = intent.getStringExtra(EXTRA_RTMP) ?: ""
+                val duration = intent.getLongExtra("EXTRA_DURATION", 0)
                 
                 acquireLocks()
                 startForegroundServiceWithNotification()
                 
-                handler.post(schedulerRunnable)
-                writeLog("START: Serwis uruchomiony, harmonogram: ${scheduledTasks.size} zadań")
+                startStreamingTask(rtsp, rtmp, duration)
             }
             ACTION_STOP -> stopStreaming()
         }
         return START_NOT_STICKY
     }
 
-    private fun startStreamingTask(task: StreamTask) {
+    private fun startStreamingTask(rtsp: String, rtmp: String, duration: Long) {
         isStreaming = true
         sendStateBroadcast(true)
-        writeLog("START: Rozpoczynam stream, czas trwania: ${task.durationMillis / 60000} min")
-        startFFmpeg(savedRtspUrl, savedRtmpUrl)
+        addLog(this, "START: Rozpoczynam stream, czas trwania: ${duration / 60000} min")
+        startFFmpeg(rtsp, rtmp)
         
         handler.postDelayed({
             if (isStreaming) {
                 stopStreamingInternal()
                 isStreaming = false
                 sendStateBroadcast(false)
-                writeLog("STOP: Zakończono sesję zgodnie z harmonogramem")
+                addLog(this, "STOP: Zakończono sesję zgodnie z harmonogramem")
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                stopSelf()
             }
-        }, task.durationMillis)
+        }, duration)
     }
 
     @SuppressLint("WakelockTimeout")
@@ -161,20 +128,20 @@ class StreamingService : Service() {
         val ffmpegCommand = "-re -rtsp_transport tcp -i \"$rtspUrl\" -f lavfi -i anullsrc=channel_layout=stereo:sample_rate=44100 -c:v libx264 -preset veryfast -b:v 8000k -maxrate 8000k -bufsize 16000k -pix_fmt yuv420p -g 50 -c:a aac -b:a 128k -map 0:v -map 1:a -shortest -f flv \"$rtmpUrl\""
         
         val session = FFmpegKit.executeAsync(ffmpegCommand) { session ->
-            writeLog("FFmpeg finished with state ${session.state}")
+            addLog(this, "FFmpeg finished with state ${session.state}")
             isStreaming = false
             sendStateBroadcast(false)
         }
         currentSessionId = session.sessionId
-        writeLog("FFmpeg session started with ID: $currentSessionId")
+        addLog(this, "FFmpeg session started with ID: $currentSessionId")
     }
 
     private fun stopStreamingInternal() {
-        writeLog("Zatrzymywanie sesji FFmpeg...")
+        addLog(this, "Zatrzymywanie sesji FFmpeg...")
         currentSessionId?.let {
             FFmpegKit.cancel(it)
         }
-        FFmpegKit.cancel() // Dodatkowe upewnienie się
+        FFmpegKit.cancel() 
     }
 
     private fun stopStreaming() {
@@ -182,8 +149,7 @@ class StreamingService : Service() {
         isStreaming = false
         sendStateBroadcast(false)
         releaseLocks()
-        handler.removeCallbacks(schedulerRunnable)
-        writeLog("STOP: Zatrzymano ręcznie")
+        addLog(this, "STOP: Zatrzymano ręcznie")
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
@@ -207,8 +173,6 @@ class StreamingService : Service() {
 
     override fun onDestroy() {
         releaseLocks()
-        handler.removeCallbacks(schedulerRunnable)
-        sendStateBroadcast(false)
         super.onDestroy()
     }
     override fun onBind(intent: Intent?): IBinder? = null
