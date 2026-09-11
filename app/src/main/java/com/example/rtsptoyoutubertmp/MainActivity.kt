@@ -196,6 +196,11 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun getAlarmIntent(index: Int): PendingIntent {
+        val intent = Intent(this, AlarmReceiver::class.java)
+        return PendingIntent.getBroadcast(this, index, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+    }
+
     @SuppressLint("ScheduleExactAlarm")
     private fun scheduleStreaming() {
         stopAll() 
@@ -248,13 +253,14 @@ class MainActivity : AppCompatActivity() {
 
     private fun stopAll() {
         val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
-        for (i in 0 until 50) { // Czyścimy z zapasem
-            val intent = Intent(this, AlarmReceiver::class.java)
-            val pendingIntent = PendingIntent.getBroadcast(this, i, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-            alarmManager.cancel(pendingIntent)
+        for (i in 0 until 50) {
+            alarmManager.cancel(getAlarmIntent(i))
         }
         
-        startService(Intent(this, StreamingService::class.java).apply { action = StreamingService.ACTION_STOP })
+        val stopIntent = Intent(this, StreamingService::class.java).apply { 
+            action = StreamingService.ACTION_STOP 
+        }
+        startService(stopIntent)
         
         isScheduled = false
         startButton.text = "START STREAMING"
