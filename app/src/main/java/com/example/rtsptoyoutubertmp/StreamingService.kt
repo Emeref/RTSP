@@ -29,8 +29,9 @@ class StreamingService : Service() {
         const val ACTION_STOP = "ACTION_STOP"
         const val EXTRA_RTSP = "EXTRA_RTSP"
         const val EXTRA_RTMP = "EXTRA_RTMP"
-        const val EXTRA_LOG_FILE = "EXTRA_LOG_FILE"
-        const val EXTRA_TASKS = "EXTRA_TASKS"
+        const val EXTRA_DURATION = "EXTRA_DURATION"
+        const val EXTRA_REQUEST_CODE = "EXTRA_REQUEST_CODE"
+        const val EXTRA_TARGET_TIME = "EXTRA_TARGET_TIME"
         
         private const val MAX_LOGS = 50
         val logBuffer = ArrayDeque<String>(MAX_LOGS)
@@ -73,40 +74,50 @@ class StreamingService : Service() {
         FFmpegKitConfig.setLogLevel(Level.AV_LOG_INFO)
     }
 
-    @SuppressLint("WakelockTimeout")
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        when (intent?.action) {
-            ACTION_START -> {
-                val rtsp = intent.getStringExtra(EXTRA_RTSP) ?: ""
-                val rtmp = intent.getStringExtra(EXTRA_RTMP) ?: ""
-                val duration = intent.getLongExtra("EXTRA_DURATION", 0)
-                
+        val action = intent?.action
+        
+        // Zabezpieczenie: Serwis reaguje TYLKO na jawne akcje START lub STOP
+        if (action == ACTION_STOP) {
+            stopStreaming()
+            return START_NOT_STICKY
+        }
+        
+        if (action == ACTION_START) {
+            val rtsp = intent.getStringExtra(EXTRA_RTSP) ?: ""
+            val rtmp = intent.getStringExtra(EXTRA_RTMP) ?: ""
+            val duration = intent.getLongExtra(EXTRA_DURATION, 0L)
+            
+            if (rtsp.isNotEmpty() && rtmp.isNotEmpty()) {
+                addLog(this, "Service: Otrzymano żądanie startu. RTSP=$rtsp, RTMP=$rtmp, Czas=$duration")
                 acquireLocks()
                 startForegroundServiceWithNotification()
-                
                 startStreamingTask(rtsp, rtmp, duration)
             }
-            ACTION_STOP -> stopStreaming()
+            return START_NOT_STICKY
         }
+        
+        // Jeśli nie podano ACTION_START, ignorujemy (nie startujemy domyślnie)
         return START_NOT_STICKY
     }
 
     private fun startStreamingTask(rtsp: String, rtmp: String, duration: Long) {
+        if (isStreaming) {
+            addLog(this, "Service: Stream już działa, ignoruję żądanie.")
+            return
+        }
+        
         isStreaming = true
         sendStateBroadcast(true)
         addLog(this, "START: Rozpoczynam stream, czas trwania: ${duration / 60000} min")
         startFFmpeg(rtsp, rtmp)
         
-        handler.postDelayed({
-            if (isStreaming) {
-                stopStreamingInternal()
-                isStreaming = false
-                sendStateBroadcast(false)
+        if (duration > 0) {
+            handler.postDelayed({
                 addLog(this, "STOP: Zakończono sesję zgodnie z harmonogramem")
-                stopForeground(STOP_FOREGROUND_REMOVE)
-                stopSelf()
-            }
-        }, duration)
+                stopStreamingInternal()
+            }, duration)
+        }
     }
 
     @SuppressLint("WakelockTimeout")
@@ -142,16 +153,16 @@ class StreamingService : Service() {
             FFmpegKit.cancel(it)
         }
         FFmpegKit.cancel() 
-    }
-
-    private fun stopStreaming() {
-        stopStreamingInternal()
         isStreaming = false
         sendStateBroadcast(false)
         releaseLocks()
-        addLog(this, "STOP: Zatrzymano ręcznie")
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
+    }
+
+    private fun stopStreaming() {
+        addLog(this, "STOP: Zatrzymano ręcznie")
+        stopStreamingInternal()
     }
 
     private fun createNotificationChannel() {

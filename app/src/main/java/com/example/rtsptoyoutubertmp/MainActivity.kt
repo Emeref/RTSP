@@ -122,6 +122,9 @@ class MainActivity : AppCompatActivity() {
             override fun afterTextChanged(s: Editable?) {
                 if (oldVal != s.toString()) {
                     logAction("Edycja $name: '$oldVal' -> '${s.toString()}'")
+                    // Automatyczne zapisywanie RTSP/RTMP
+                    if (name == "RTSP") prefs.edit().putString("last_rtsp", s.toString()).apply()
+                    if (name == "RTMP") prefs.edit().putString("last_rtmp", s.toString()).apply()
                 }
             }
         })
@@ -147,10 +150,11 @@ class MainActivity : AppCompatActivity() {
             val cal = Calendar.getInstance()
             TimePickerDialog(this, { _, h, m ->
                 val oldTime = timeBtn.text.toString()
-                cal.set(Calendar.HOUR_OF_DAY, h); cal.set(Calendar.MINUTE, m); cal.set(Calendar.SECOND, 0)
+                cal.set(Calendar.HOUR_OF_DAY, h); cal.set(Calendar.MINUTE, m); cal.set(Calendar.SECOND, 0); cal.set(Calendar.MILLISECOND, 0)
                 timeBtn.tag = cal.timeInMillis
                 timeBtn.text = String.format(Locale.getDefault(), "%02d:%02d", h, m)
                 logAction("Edycja harmonogramu: Czas $oldTime -> ${timeBtn.text}")
+                saveTasks() // Automatyczny zapis
             }, cal.get(Calendar.HOUR_OF_DAY), cal.get(Calendar.MINUTE), true).show()
         }
         
@@ -161,6 +165,7 @@ class MainActivity : AppCompatActivity() {
             override fun afterTextChanged(s: Editable?) {
                 if (oldVal != s.toString()) {
                     logAction("Edycja harmonogramu: Czas trwania $oldVal -> ${s.toString()}")
+                    saveTasks() // Automatyczny zapis
                 }
             }
         })
@@ -168,11 +173,13 @@ class MainActivity : AppCompatActivity() {
         deleteBtn.setOnClickListener { 
             logAction("Usunięto harmonogram: ${timeBtn.text} / ${durationEdit.text} min")
             tasksContainer.removeView(row) 
+            saveTasks() // Automatyczny zapis
         }
         
         row.addView(timeBtn); row.addView(durationEdit); row.addView(deleteBtn)
         tasksContainer.addView(row)
         logAction("Dodano harmonogram: ${timeBtn.text} / ${durationEdit.text} min")
+        saveTasks() // Automatyczny zapis
     }
 
     private fun saveTasks() {
@@ -197,7 +204,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun getAlarmIntent(index: Int): PendingIntent {
-        val intent = Intent(this, AlarmReceiver::class.java)
+        val intent = Intent(this, AlarmReceiver::class.java).apply {
+            action = StreamingService.ACTION_START
+        }
         return PendingIntent.getBroadcast(this, index, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
     }
 
@@ -220,22 +229,32 @@ class MainActivity : AppCompatActivity() {
             val timeMillis = btn.tag as? Long ?: continue
             val dur = (edit.text.toString().toLongOrNull() ?: 0L) * 60000
 
-            val scheduledTime = Calendar.getInstance().apply { 
-                timeInMillis = timeMillis 
+            val scheduledTime = Calendar.getInstance().apply {
+                val target = Calendar.getInstance().apply { timeInMillis = timeMillis }
+                set(Calendar.HOUR_OF_DAY, target.get(Calendar.HOUR_OF_DAY))
+                set(Calendar.MINUTE, target.get(Calendar.MINUTE))
+                set(Calendar.SECOND, 0)
+                set(Calendar.MILLISECOND, 0)
+                
                 if (before(now)) {
                     add(Calendar.DAY_OF_YEAR, 1)
                 }
             }
             
-            taskDetails.add("${btn.text} (${edit.text} min)")
+            val formattedTime = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(scheduledTime.time)
+            taskDetails.add("${btn.text} ($formattedTime, ${edit.text} min)")
 
             val intent = Intent(this, AlarmReceiver::class.java).apply {
+                action = StreamingService.ACTION_START
                 putExtra(StreamingService.EXTRA_RTSP, rtsp)
                 putExtra(StreamingService.EXTRA_RTMP, rtmp)
-                putExtra("EXTRA_DURATION", dur)
+                putExtra(StreamingService.EXTRA_DURATION, dur)
+                putExtra(StreamingService.EXTRA_REQUEST_CODE, i)
+                putExtra(StreamingService.EXTRA_TARGET_TIME, scheduledTime.timeInMillis)
             }
 
             val pendingIntent = PendingIntent.getBroadcast(this, i, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+            
             alarmManager.setExactAndAllowWhileIdle(
                 AlarmManager.RTC_WAKEUP,
                 scheduledTime.timeInMillis,
@@ -243,7 +262,7 @@ class MainActivity : AppCompatActivity() {
             )
         }
         
-        logAction("START HARMONOGRAMU: Liczba zadań: ${taskDetails.size}, Godziny: ${taskDetails.joinToString()}")
+        logAction("START HARMONOGRAMU: Liczba zadań: ${taskDetails.size}, Detale: ${taskDetails.joinToString()}")
         
         isScheduled = true
         startButton.text = "STOP HARMONOGRAM"
