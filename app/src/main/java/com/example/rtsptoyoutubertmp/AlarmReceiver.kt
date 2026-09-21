@@ -5,7 +5,10 @@ import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import java.text.SimpleDateFormat
 import java.util.Calendar
+import java.util.Date
+import java.util.Locale
 
 class AlarmReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
@@ -16,10 +19,11 @@ class AlarmReceiver : BroadcastReceiver() {
         val targetTime = intent.getLongExtra(StreamingService.EXTRA_TARGET_TIME, 0L)
 
         val now = System.currentTimeMillis()
+        val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
         
         // Zabezpieczenie przed przedwczesnym wywołaniem (tolerancja 30s)
         if (targetTime > 0 && targetTime > now + 30000) {
-            StreamingService.addLog(context, "AlarmReceiver: Otrzymano sygnał zbyt wcześnie. Ignoruję. (Target: $targetTime, Now: $now)")
+            StreamingService.addLog(context, "AlarmReceiver: Sygnał zbyt wcześnie. Ignoruję. (Planowo: ${sdf.format(Date(targetTime))}, Teraz: ${sdf.format(Date(now))})")
             return
         }
 
@@ -34,7 +38,7 @@ class AlarmReceiver : BroadcastReceiver() {
             context.startForegroundService(serviceIntent)
         }
 
-        // Zaplanowanie kolejnego powtórzenia na jutro (dokładnie +24h od planowanego czasu)
+        // Zaplanowanie kolejnego powtórzenia na jutro
         val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
         val nextTrigger = if (targetTime > 0) {
             targetTime + AlarmManager.INTERVAL_DAY
@@ -66,6 +70,6 @@ class AlarmReceiver : BroadcastReceiver() {
             pendingIntent
         )
         
-        StreamingService.addLog(context, "AlarmReceiver: Zaplanowano powtórzenie na jutro: $nextTrigger")
+        StreamingService.addLog(context, "AlarmReceiver: Zaplanowano powtórkę na jutro: ${sdf.format(Date(nextTrigger))}")
     }
 }

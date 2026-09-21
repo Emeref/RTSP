@@ -71,13 +71,20 @@ class StreamingService : Service() {
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
+        // Przywrócenie poziomu logowania INFO dla zachowania czystości logów
         FFmpegKitConfig.setLogLevel(Level.AV_LOG_INFO)
+        FFmpegKitConfig.enableLogCallback { ffmpegLog ->
+            val msg = ffmpegLog.message
+            // Zapisujemy tylko błędy oraz krytyczne komunikaty ostrzegawcze z FFmpeg, odrzucając pakiety sieciowe i logi śledzenia klatek
+            if (msg.contains("error", ignoreCase = true) || msg.contains("failed", ignoreCase = true) || msg.contains("invalid", ignoreCase = true)) {
+                addLog(this, "FFmpeg Err: ${msg.trim()}")
+            }
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val action = intent?.action
         
-        // Zabezpieczenie: Serwis reaguje TYLKO na jawne akcje START lub STOP
         if (action == ACTION_STOP) {
             stopStreaming()
             return START_NOT_STICKY
@@ -97,7 +104,6 @@ class StreamingService : Service() {
             return START_NOT_STICKY
         }
         
-        // Jeśli nie podano ACTION_START, ignorujemy (nie startujemy domyślnie)
         return START_NOT_STICKY
     }
 
@@ -114,7 +120,7 @@ class StreamingService : Service() {
         
         if (duration > 0) {
             handler.postDelayed({
-                addLog(this, "STOP: Zakończono sesję zgodnie z harmonogramem")
+                addLog(this, "STOP: Zakończono sesję zgodnie z harmonogramem ($duration ms)")
                 stopStreamingInternal()
             }, duration)
         }
@@ -126,7 +132,13 @@ class StreamingService : Service() {
         wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "StreamingService::Wakelock")
         wakeLock?.acquire()
         val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
-        wifiLock = wifiManager.createWifiLock(WifiManager.WIFI_MODE_FULL, "StreamingService::WifiLock")
+        val lockType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            WifiManager.WIFI_MODE_FULL_HIGH_PERF
+        } else {
+            @Suppress("DEPRECATION")
+            WifiManager.WIFI_MODE_FULL
+        }
+        wifiLock = wifiManager.createWifiLock(lockType, "StreamingService::WifiLock")
         wifiLock?.acquire()
     }
 
@@ -136,10 +148,36 @@ class StreamingService : Service() {
     }
 
     private fun startFFmpeg(rtspUrl: String, rtmpUrl: String) {
-        val ffmpegCommand = "-re -rtsp_transport tcp -i \"$rtspUrl\" -f lavfi -i anullsrc=channel_layout=stereo:sample_rate=44100 -c:v libx264 -preset veryfast -b:v 8000k -maxrate 8000k -bufsize 16000k -pix_fmt yuv420p -g 50 -c:a aac -b:a 128k -map 0:v -map 1:a -shortest -f flv \"$rtmpUrl\""
+        addLog(this, "DEBUG: Przygotowuję tablicę argumentów...")
         
-        val session = FFmpegKit.executeAsync(ffmpegCommand) { session ->
-            addLog(this, "FFmpeg finished with state ${session.state}")
+        // Bezpośrednie zdefiniowanie tablicy argumentów całkowicie omija wywoływanie parseArguments przez FFmpegKit.
+        // Każdy element tablicy trafia bezpośrednio do procesu ffmpeg jako osobny argument wiersza poleceń.
+        val ffmpegArguments = arrayOf(
+            "-rtsp_transport", "tcp",
+            "-i", rtspUrl,
+            "-f", "lavfi",
+            "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
+            "-c:v", "copy",
+            "-c:a", "aac",
+            "-b:a", "128k",
+            "-map", "0:v:0",
+            "-map", "1:a:0",
+            "-f", "flv",
+            rtmpUrl
+        )
+
+        addLog(this, "DEBUG: Wywołuję executeWithArgumentsAsync (Args size: ${ffmpegArguments.size})")
+        
+        val session = FFmpegKit.executeWithArgumentsAsync(ffmpegArguments) { session ->
+            val state = session.state
+            val returnCode = session.returnCode
+            val logs = session.allLogsAsString
+            addLog(this, "FFmpeg zakończony: Stan=$state, Kod=$returnCode")
+            
+            if (returnCode?.isValueSuccess != true) {
+                addLog(this, "FFmpeg ERROR LOG:\n$logs")
+            }
+
             isStreaming = false
             sendStateBroadcast(false)
         }

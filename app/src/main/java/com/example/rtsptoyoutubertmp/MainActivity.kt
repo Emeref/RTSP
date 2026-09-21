@@ -9,6 +9,8 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
+import android.provider.Settings
 import android.text.Editable
 import android.text.TextWatcher
 import android.widget.*
@@ -77,6 +79,7 @@ class MainActivity : AppCompatActivity() {
         rtspEditText.setText(prefs.getString("last_rtsp", ""))
         rtmpEditText.setText(prefs.getString("last_rtmp", ""))
         loadSavedTasks()
+        checkBatteryOptimizations()
 
         findViewById<Button>(R.id.btnAddTask).setOnClickListener { 
             logAction("Kliknięto: Dodaj zadanie")
@@ -130,66 +133,67 @@ class MainActivity : AppCompatActivity() {
         })
     }
 
-    private fun addTaskRow(timeMillis: Long?, durationMin: String?) {
+    private fun addTaskRow(startTimeMillis: Long?, endTimeMillis: Long?) {
         val row = LinearLayout(this).apply { 
             orientation = LinearLayout.HORIZONTAL 
             setPadding(0, 8, 0, 8)
         }
-        val timeBtn = Button(this).apply { 
-            text = if (timeMillis != null) timeFormat.format(Date(timeMillis)) else "Godzina"
-            tag = timeMillis 
+        val startBtn = Button(this).apply { 
+            text = if (startTimeMillis != null) timeFormat.format(Date(startTimeMillis)) else "Start"
+            tag = startTimeMillis 
         }
-        val durationEdit = EditText(this).apply { 
-            hint = "Minuty"
-            inputType = android.text.InputType.TYPE_CLASS_NUMBER
-            if (durationMin != null) setText(durationMin)
+        val endBtn = Button(this).apply { 
+            text = if (endTimeMillis != null) timeFormat.format(Date(endTimeMillis)) else "Koniec"
+            tag = endTimeMillis 
         }
         val deleteBtn = Button(this).apply { text = "X" }
         
-        timeBtn.setOnClickListener {
+        startBtn.setOnClickListener {
             val cal = Calendar.getInstance()
+            if (startBtn.tag != null) cal.timeInMillis = startBtn.tag as Long
             TimePickerDialog(this, { _, h, m ->
-                val oldTime = timeBtn.text.toString()
+                val oldTime = startBtn.text.toString()
                 cal.set(Calendar.HOUR_OF_DAY, h); cal.set(Calendar.MINUTE, m); cal.set(Calendar.SECOND, 0); cal.set(Calendar.MILLISECOND, 0)
-                timeBtn.tag = cal.timeInMillis
-                timeBtn.text = String.format(Locale.getDefault(), "%02d:%02d", h, m)
-                logAction("Edycja harmonogramu: Czas $oldTime -> ${timeBtn.text}")
-                saveTasks() // Automatyczny zapis
+                startBtn.tag = cal.timeInMillis
+                startBtn.text = String.format(Locale.getDefault(), "%02d:%02d", h, m)
+                logAction("Edycja harmonogramu: Start $oldTime -> ${startBtn.text}")
+                saveTasks()
             }, cal.get(Calendar.HOUR_OF_DAY), cal.get(Calendar.MINUTE), true).show()
         }
         
-        durationEdit.addTextChangedListener(object : TextWatcher {
-            var oldVal = durationMin ?: ""
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) { oldVal = s.toString() }
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
-            override fun afterTextChanged(s: Editable?) {
-                if (oldVal != s.toString()) {
-                    logAction("Edycja harmonogramu: Czas trwania $oldVal -> ${s.toString()}")
-                    saveTasks() // Automatyczny zapis
-                }
-            }
-        })
-        
-        deleteBtn.setOnClickListener { 
-            logAction("Usunięto harmonogram: ${timeBtn.text} / ${durationEdit.text} min")
-            tasksContainer.removeView(row) 
-            saveTasks() // Automatyczny zapis
+        endBtn.setOnClickListener {
+            val cal = Calendar.getInstance()
+            if (endBtn.tag != null) cal.timeInMillis = endBtn.tag as Long
+            TimePickerDialog(this, { _, h, m ->
+                val oldTime = endBtn.text.toString()
+                cal.set(Calendar.HOUR_OF_DAY, h); cal.set(Calendar.MINUTE, m); cal.set(Calendar.SECOND, 0); cal.set(Calendar.MILLISECOND, 0)
+                endBtn.tag = cal.timeInMillis
+                endBtn.text = String.format(Locale.getDefault(), "%02d:%02d", h, m)
+                logAction("Edycja harmonogramu: Koniec $oldTime -> ${endBtn.text}")
+                saveTasks()
+            }, cal.get(Calendar.HOUR_OF_DAY), cal.get(Calendar.MINUTE), true).show()
         }
         
-        row.addView(timeBtn); row.addView(durationEdit); row.addView(deleteBtn)
+        deleteBtn.setOnClickListener { 
+            logAction("Usunięto harmonogram: ${startBtn.text} - ${endBtn.text}")
+            tasksContainer.removeView(row) 
+            saveTasks()
+        }
+        
+        row.addView(startBtn); row.addView(endBtn); row.addView(deleteBtn)
         tasksContainer.addView(row)
-        logAction("Dodano harmonogram: ${timeBtn.text} / ${durationEdit.text} min")
-        saveTasks() // Automatyczny zapis
+        logAction("Dodano harmonogram: ${startBtn.text} - ${endBtn.text}")
+        saveTasks()
     }
 
     private fun saveTasks() {
         val taskSet = mutableSetOf<String>()
         for (i in 0 until tasksContainer.childCount) {
             val row = tasksContainer.getChildAt(i) as LinearLayout
-            val btn = row.getChildAt(0) as Button
-            val edit = row.getChildAt(1) as EditText
-            if (btn.tag != null && edit.text.isNotEmpty()) {
-                taskSet.add("${btn.tag}|${edit.text}")
+            val startBtn = row.getChildAt(0) as Button
+            val endBtn = row.getChildAt(1) as Button
+            if (startBtn.tag != null && endBtn.tag != null) {
+                taskSet.add("${startBtn.tag}|${endBtn.tag}")
             }
         }
         prefs.edit().putStringSet("saved_tasks", taskSet).apply()
@@ -199,7 +203,20 @@ class MainActivity : AppCompatActivity() {
         val tasks = prefs.getStringSet("saved_tasks", emptySet()) ?: return
         tasks.forEach {
             val parts = it.split("|")
-            if (parts.size == 2) addTaskRow(parts[0].toLong(), parts[1])
+            if (parts.size == 2) {
+                val start = parts[0].toLongOrNull()
+                val secondPart = parts[1]
+                val end = secondPart.toLongOrNull()
+                if (start != null) {
+                    if (end != null && end > 100000) {
+                        addTaskRow(start, end)
+                    } else {
+                        // Stary format z minutami trwania
+                        val minutes = secondPart.toLongOrNull() ?: 0L
+                        addTaskRow(start, start + minutes * 60000)
+                    }
+                }
+            }
         }
     }
 
@@ -212,7 +229,8 @@ class MainActivity : AppCompatActivity() {
 
     @SuppressLint("ScheduleExactAlarm")
     private fun scheduleStreaming() {
-        stopAll() 
+        // Wyczyszczenie poprzednich alarmów bez ubijania aktualnie trwającego streamu
+        stopAll(stopService = false) 
         saveTasks()
 
         val rtsp = rtspEditText.text.toString()
@@ -224,15 +242,17 @@ class MainActivity : AppCompatActivity() {
 
         for (i in 0 until tasksContainer.childCount) {
             val row = tasksContainer.getChildAt(i) as LinearLayout
-            val btn = row.getChildAt(0) as Button
-            val edit = row.getChildAt(1) as EditText
-            val timeMillis = btn.tag as? Long ?: continue
-            val dur = (edit.text.toString().toLongOrNull() ?: 0L) * 60000
+            val startBtn = row.getChildAt(0) as Button
+            val endBtn = row.getChildAt(1) as Button
+            val startTimeMillis = startBtn.tag as? Long ?: continue
+            val endTimeMillis = endBtn.tag as? Long ?: continue
+
+            val startCal = Calendar.getInstance().apply { timeInMillis = startTimeMillis }
+            val endCal = Calendar.getInstance().apply { timeInMillis = endTimeMillis }
 
             val scheduledTime = Calendar.getInstance().apply {
-                val target = Calendar.getInstance().apply { timeInMillis = timeMillis }
-                set(Calendar.HOUR_OF_DAY, target.get(Calendar.HOUR_OF_DAY))
-                set(Calendar.MINUTE, target.get(Calendar.MINUTE))
+                set(Calendar.HOUR_OF_DAY, startCal.get(Calendar.HOUR_OF_DAY))
+                set(Calendar.MINUTE, startCal.get(Calendar.MINUTE))
                 set(Calendar.SECOND, 0)
                 set(Calendar.MILLISECOND, 0)
                 
@@ -240,9 +260,21 @@ class MainActivity : AppCompatActivity() {
                     add(Calendar.DAY_OF_YEAR, 1)
                 }
             }
-            
+
+            val scheduledEndTime = Calendar.getInstance().apply {
+                set(Calendar.HOUR_OF_DAY, endCal.get(Calendar.HOUR_OF_DAY))
+                set(Calendar.MINUTE, endCal.get(Calendar.MINUTE))
+                set(Calendar.SECOND, 0)
+                set(Calendar.MILLISECOND, 0)
+                
+                if (before(scheduledTime) || timeInMillis == scheduledTime.timeInMillis) {
+                    add(Calendar.DAY_OF_YEAR, 1)
+                }
+            }
+
+            val dur = scheduledEndTime.timeInMillis - scheduledTime.timeInMillis
             val formattedTime = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(scheduledTime.time)
-            taskDetails.add("${btn.text} ($formattedTime, ${edit.text} min)")
+            taskDetails.add("${startBtn.text}-${endBtn.text} ($formattedTime, ${dur / 60000} min)")
 
             val intent = Intent(this, AlarmReceiver::class.java).apply {
                 action = StreamingService.ACTION_START
@@ -270,16 +302,18 @@ class MainActivity : AppCompatActivity() {
         statusTextView.text = "Status: Zaplanowano"
     }
 
-    private fun stopAll() {
+    private fun stopAll(stopService: Boolean = true) {
         val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
         for (i in 0 until 50) {
             alarmManager.cancel(getAlarmIntent(i))
         }
         
-        val stopIntent = Intent(this, StreamingService::class.java).apply { 
-            action = StreamingService.ACTION_STOP 
+        if (stopService) {
+            val stopIntent = Intent(this, StreamingService::class.java).apply { 
+                action = StreamingService.ACTION_STOP 
+            }
+            startService(stopIntent)
         }
-        startService(stopIntent)
         
         isScheduled = false
         startButton.text = "START STREAMING"
@@ -310,6 +344,21 @@ class MainActivity : AppCompatActivity() {
             .setView(ScrollView(this).apply { addView(textView) })
             .setPositiveButton("Zamknij", null)
             .show()
+    }
+
+    private fun checkBatteryOptimizations() {
+        val pm = getSystemService(POWER_SERVICE) as PowerManager
+        if (!pm.isIgnoringBatteryOptimizations(packageName)) {
+            AlertDialog.Builder(this)
+                .setTitle("Wymagane wyłączenie optymalizacji baterii")
+                .setMessage("Aby stream mógł wystartować o zaplanowanej godzinie (gdy telefon śpi), musisz wyłączyć optymalizację baterii dla tej aplikacji. Znajdź aplikację na liście i wybierz 'Brak ograniczeń'.")
+                .setPositiveButton("Otwórz ustawienia") { _, _ ->
+                    val intent = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+                    startActivity(intent)
+                }
+                .setNegativeButton("Zamknij", null)
+                .show()
+        }
     }
 
     override fun onResume() { super.onResume(); handler.post(logUpdater) }
