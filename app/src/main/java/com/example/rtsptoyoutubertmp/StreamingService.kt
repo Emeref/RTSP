@@ -71,11 +71,11 @@ class StreamingService : Service() {
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
-        // Przywrócenie poziomu logowania INFO dla zachowania czystości logów
-        FFmpegKitConfig.setLogLevel(Level.AV_LOG_INFO)
+        // Poziom logowania AV_LOG_WARNING
+        FFmpegKitConfig.setLogLevel(Level.AV_LOG_WARNING)
         FFmpegKitConfig.enableLogCallback { ffmpegLog ->
             val msg = ffmpegLog.message
-            // Zapisujemy tylko błędy oraz krytyczne komunikaty ostrzegawcze z FFmpeg, odrzucając pakiety sieciowe i logi śledzenia klatek
+            // Zapisujemy tylko błędy z FFmpeg, odrzucając klatki i komunikaty postępu
             if (msg.contains("error", ignoreCase = true) || msg.contains("failed", ignoreCase = true) || msg.contains("invalid", ignoreCase = true)) {
                 addLog(this, "FFmpeg Err: ${msg.trim()}")
             }
@@ -148,11 +148,9 @@ class StreamingService : Service() {
     }
 
     private fun startFFmpeg(rtspUrl: String, rtmpUrl: String) {
-        addLog(this, "DEBUG: Przygotowuję tablicę argumentów...")
-        
-        // Bezpośrednie zdefiniowanie tablicy argumentów całkowicie omija wywoływanie parseArguments przez FFmpegKit.
-        // Każdy element tablicy trafia bezpośrednio do procesu ffmpeg jako osobny argument wiersza poleceń.
         val ffmpegArguments = arrayOf(
+            "-nostats",
+            "-loglevel", "error",
             "-rtsp_transport", "tcp",
             "-i", rtspUrl,
             "-f", "lavfi",
@@ -166,23 +164,30 @@ class StreamingService : Service() {
             rtmpUrl
         )
 
-        addLog(this, "DEBUG: Wywołuję executeWithArgumentsAsync (Args size: ${ffmpegArguments.size})")
-        
         val session = FFmpegKit.executeWithArgumentsAsync(ffmpegArguments) { session ->
             val state = session.state
             val returnCode = session.returnCode
-            val logs = session.allLogsAsString
-            addLog(this, "FFmpeg zakończony: Stan=$state, Kod=$returnCode")
             
-            if (returnCode?.isValueSuccess != true) {
-                addLog(this, "FFmpeg ERROR LOG:\n$logs")
+            if (returnCode?.isValueSuccess == true) {
+                addLog(this, "STOP: Stream zakończony pomyślnie")
+            } else if (returnCode?.isValueCancel == true) {
+                addLog(this, "STOP: Stream zatrzymany/anulowany")
+            } else {
+                addLog(this, "BŁĄD: Stream przerwany z błędem (Kod=$returnCode, Stan=$state)")
+                val failLogs = session.allLogsAsString
+                    .lines()
+                    .filter { line -> line.isNotBlank() && !line.contains("frame=") && !line.contains("q=-1.0") }
+                    .takeLast(10)
+                    .joinToString("\n")
+                if (failLogs.isNotEmpty()) {
+                    addLog(this, "Szczegóły błędu:\n$failLogs")
+                }
             }
 
             isStreaming = false
             sendStateBroadcast(false)
         }
         currentSessionId = session.sessionId
-        addLog(this, "FFmpeg session started with ID: $currentSessionId")
     }
 
     private fun stopStreamingInternal() {

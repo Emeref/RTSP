@@ -50,7 +50,7 @@ class MainActivity : AppCompatActivity() {
         override fun run() {
             synchronized(StreamingService.logBuffer) {
                 val logBuilder = StringBuilder()
-                for (log in StreamingService.logBuffer) {
+                for (log in StreamingService.logBuffer.toList().asReversed()) {
                     logBuilder.append(log).append("\n")
                 }
                 logTextView.text = logBuilder.toString()
@@ -124,7 +124,6 @@ class MainActivity : AppCompatActivity() {
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
             override fun afterTextChanged(s: Editable?) {
                 if (oldVal != s.toString()) {
-                    logAction("Edycja $name: '$oldVal' -> '${s.toString()}'")
                     // Automatyczne zapisywanie RTSP/RTMP
                     if (name == "RTSP") prefs.edit().putString("last_rtsp", s.toString()).apply()
                     if (name == "RTMP") prefs.edit().putString("last_rtmp", s.toString()).apply()
@@ -323,7 +322,7 @@ class MainActivity : AppCompatActivity() {
     private fun showLogsList() {
         val logDir = File(filesDir, "logs")
         if (!logDir.exists()) logDir.mkdir()
-        val files = logDir.listFiles() ?: arrayOf()
+        val files = logDir.listFiles()?.sortedByDescending { it.lastModified() } ?: listOf()
         val fileNames = files.map { it.name }.toTypedArray()
 
         AlertDialog.Builder(this)
@@ -337,7 +336,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun showLogContent(fileName: String, content: String) {
         val textView = TextView(this)
-        textView.text = content
+        val reversedContent = content.lines().reversed().joinToString("\n").trim()
+        textView.text = reversedContent
         textView.setPadding(16, 16, 16, 16)
         AlertDialog.Builder(this)
             .setTitle(fileName)
