@@ -300,7 +300,7 @@ class MainActivity : AppCompatActivity() {
 
             val dur = scheduledEndTime.timeInMillis - scheduledTime.timeInMillis
             val formattedTime = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(scheduledTime.time)
-            taskDetails.add("${startBtn.text}-${endBtn.text} ($formattedTime, ${dur / 60000} min)")
+            taskDetails.add("${startBtn.text}-${endBtn.text} ($formattedTime, ${StreamingService.formatDuration(dur)})")
 
             val intent = Intent(this, AlarmReceiver::class.java).apply {
                 action = StreamingService.ACTION_START

@@ -1,5 +1,6 @@
 package com.example.rtsptoyoutubertmp
 
+import android.R
 import android.annotation.SuppressLint
 import android.app.*
 import android.content.Context
@@ -52,6 +53,19 @@ class StreamingService : Service() {
             if (!logDir.exists()) logDir.mkdir()
             val logFile = File(logDir, "log_${SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())}.txt")
             logFile.appendText(formatted + "\n")
+        }
+
+        /**
+         * Formats a duration in milliseconds into a human-readable format (e.g., "5h 48m" or "30m").
+         */
+        fun formatDuration(millis: Long): String {
+            val hours = millis / 3600000L
+            val minutes = (millis % 3600000L) / 60000
+            return if (hours > 0) {
+                "${hours}h ${minutes}m"
+            } else {
+                "${minutes}m"
+            }
         }
     }
 
@@ -128,10 +142,10 @@ class StreamingService : Service() {
 
     @SuppressLint("WakelockTimeout")
     private fun acquireLocks() {
-        val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+        val powerManager = getSystemService(POWER_SERVICE) as PowerManager
         wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "StreamingService::Wakelock")
         wakeLock?.acquire()
-        val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+        val wifiManager = applicationContext.getSystemService(WIFI_SERVICE) as WifiManager
         val lockType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             WifiManager.WIFI_MODE_FULL_HIGH_PERF
         } else {
@@ -218,7 +232,7 @@ class StreamingService : Service() {
     private fun startForegroundServiceWithNotification() {
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Streaming w toku")
-            .setSmallIcon(android.R.drawable.ic_menu_camera)
+            .setSmallIcon(R.drawable.ic_menu_camera)
             .build()
         if (Build.VERSION.SDK_INT >= 34) {
             startForeground(1, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROCESSING)
