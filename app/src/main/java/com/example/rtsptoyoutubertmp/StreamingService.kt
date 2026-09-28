@@ -156,11 +156,13 @@ class StreamingService : Service() {
             "-f", "lavfi",
             "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
             "-c:v", "copy",
+            "-bsf:v", "dump_extra",
             "-c:a", "aac",
             "-b:a", "128k",
             "-map", "0:v:0",
             "-map", "1:a:0",
             "-f", "flv",
+            "-flvflags", "no_duration_filesize",
             rtmpUrl
         )
 

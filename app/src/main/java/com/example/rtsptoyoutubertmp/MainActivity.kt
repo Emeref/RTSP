@@ -43,19 +43,36 @@ class MainActivity : AppCompatActivity() {
         override fun onReceive(context: Context?, intent: Intent?) {
             val isStreaming = intent?.getBooleanExtra("is_streaming", false) ?: false
             stopStreamButton.isEnabled = isStreaming
+            if (isStreaming) {
+                statusTextView.text = "Status: Trwa transmisja"
+            } else if (isScheduled) {
+                statusTextView.text = "Status: Zaplanowano"
+            } else {
+                statusTextView.text = "Status: Zatrzymano"
+            }
+        }
+    }
+
+    private fun getTodayLogs(): String {
+        val todayStr = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
+        val logFile = File(File(filesDir, "logs"), "log_$todayStr.txt")
+        return if (logFile.exists()) {
+            try {
+                logFile.readLines().reversed().joinToString("\n")
+            } catch (_: Exception) {
+                ""
+            }
+        } else {
+            synchronized(StreamingService.logBuffer) {
+                StreamingService.logBuffer.toList().asReversed().joinToString("\n")
+            }
         }
     }
 
     private val logUpdater = object : Runnable {
         override fun run() {
-            synchronized(StreamingService.logBuffer) {
-                val logBuilder = StringBuilder()
-                for (log in StreamingService.logBuffer.toList().asReversed()) {
-                    logBuilder.append(log).append("\n")
-                }
-                logTextView.text = logBuilder.toString()
-            }
-            handler.postDelayed(this, 1000)
+            logTextView.text = getTodayLogs()
+            handler.postDelayed(this, 1500)
         }
     }
 
@@ -80,6 +97,16 @@ class MainActivity : AppCompatActivity() {
         rtmpEditText.setText(prefs.getString("last_rtmp", ""))
         loadSavedTasks()
         checkBatteryOptimizations()
+
+        // Przywrócenie trwałego stanu zaplanowania
+        isScheduled = prefs.getBoolean("is_scheduled", false)
+        if (isScheduled) {
+            startButton.text = "STOP HARMONOGRAM"
+            statusTextView.text = "Status: Zaplanowano"
+        } else {
+            startButton.text = "START STREAMING"
+            statusTextView.text = "Status: Zatrzymano"
+        }
 
         findViewById<Button>(R.id.btnAddTask).setOnClickListener { 
             logAction("Kliknięto: Dodaj zadanie")
@@ -296,6 +323,7 @@ class MainActivity : AppCompatActivity() {
         logAction("START HARMONOGRAMU: Liczba zadań: ${taskDetails.size}, Detale: ${taskDetails.joinToString()}")
         
         isScheduled = true
+        prefs.edit().putBoolean("is_scheduled", true).apply()
         startButton.text = "STOP HARMONOGRAM"
         Toast.makeText(this, "Zaplanowano zadania", Toast.LENGTH_SHORT).show()
         statusTextView.text = "Status: Zaplanowano"
@@ -315,6 +343,7 @@ class MainActivity : AppCompatActivity() {
         }
         
         isScheduled = false
+        prefs.edit().putBoolean("is_scheduled", false).apply()
         startButton.text = "START STREAMING"
         statusTextView.text = "Status: Zatrzymano"
     }
