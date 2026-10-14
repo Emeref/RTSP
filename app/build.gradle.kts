@@ -1,3 +1,4 @@
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import java.util.Properties
 
 plugins {
@@ -25,7 +26,7 @@ android {
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         
-        // Wymuszenie nowszej wersji NDK, która wspiera wyrównanie 16 KB
+        // Wymuszenie nowej wersji NDK, która wspiera wyrównanie 16 KB
         ndkVersion = "27.0.12077973"
 
         val rtspUrl = localProperties.getProperty("rtsp.url") ?: ""
@@ -55,9 +56,14 @@ android {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
     }
-    kotlinOptions {
-        jvmTarget = "11"
+    
+    // Using compilerOptions instead of the deprecated kotlinOptions
+    kotlin {
+        compilerOptions {
+            jvmTarget.set(JvmTarget.JVM_11)
+        }
     }
+    
     buildFeatures {
         compose = true
         viewBinding = true
@@ -84,6 +90,16 @@ dependencies {
     implementation(libs.androidx.compose.material3)
     implementation(libs.ffmpeg.kit.full)
     implementation(libs.smart.exception.java)
+
+    implementation(libs.google.play.services.auth)
+    implementation(libs.androidx.credentials)
+    implementation(libs.androidx.credentials.play.services.auth)
+    implementation(libs.googleid)
+    implementation(libs.androidx.security.crypto)
+    implementation(libs.kotlinx.coroutines.android)
+    implementation(libs.retrofit)
+    implementation(libs.retrofit.gson)
+    implementation(libs.okhttp.logging)
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

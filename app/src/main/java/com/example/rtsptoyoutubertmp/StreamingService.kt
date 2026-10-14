@@ -16,6 +16,7 @@ import androidx.core.app.NotificationCompat
 import com.arthenica.ffmpegkit.FFmpegKit
 import com.arthenica.ffmpegkit.FFmpegKitConfig
 import com.arthenica.ffmpegkit.Level
+import kotlinx.coroutines.*
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.ArrayDeque
@@ -23,6 +24,8 @@ import java.util.Date
 import java.util.Locale
 
 class StreamingService : Service() {
+
+    private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     companion object {
         const val CHANNEL_ID = "StreamingServiceChannel"
@@ -75,13 +78,6 @@ class StreamingService : Service() {
     private var currentSessionId: Long? = null
     private val handler = Handler(Looper.getMainLooper())
 
-    private fun sendStateBroadcast(streaming: Boolean) {
-        val intent = Intent("com.example.rtsptoyoutubertmp.STREAM_STATE")
-        intent.putExtra("is_streaming", streaming)
-        intent.setPackage(packageName)
-        sendBroadcast(intent)
-    }
-
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
@@ -111,6 +107,18 @@ class StreamingService : Service() {
             
             if (rtsp.isNotEmpty() && rtmp.isNotEmpty()) {
                 addLog(this, "Service: Otrzymano żądanie startu. RTSP=$rtsp, RTMP=$rtmp, Czas=$duration")
+                
+                // Task 1.4: Refresh token before starting stream
+                serviceScope.launch {
+                    val app = application as App
+                    val success = app.authManager.refreshAccessToken()
+                    if (success) {
+                        addLog(this@StreamingService, "Service: Token refreshed successfully.")
+                    } else {
+                        addLog(this@StreamingService, "Service: Failed to refresh token. Using old one if valid, else failing.")
+                    }
+                }
+
                 acquireLocks()
                 startForegroundServiceWithNotification()
                 startStreamingTask(rtsp, rtmp, duration)
@@ -217,6 +225,24 @@ class StreamingService : Service() {
         releaseLocks()
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
+
+        // Task 3.2: Complete the YouTube broadcast
+        serviceScope.launch {
+            val app = application as App
+            val youtubeManager = app.youtubeServiceManager
+            val activeBroadcastId = youtubeManager.findActiveBroadcastId()
+            if (activeBroadcastId != null) {
+                addLog(this@StreamingService, "Service: Found active broadcast: $activeBroadcastId. Completing it...")
+                val success = youtubeManager.completeBroadcast(activeBroadcastId)
+                if (success) {
+                    addLog(this@StreamingService, "Service: Broadcast completed successfully.")
+                } else {
+                    addLog(this@StreamingService, "Service: Failed to complete broadcast.")
+                }
+            } else {
+                addLog(this@StreamingService, "Service: No active broadcast found to complete.")
+            }
+        }
     }
 
     private fun stopStreaming() {
@@ -241,9 +267,18 @@ class StreamingService : Service() {
         }
     }
 
+    private fun sendStateBroadcast(streaming: Boolean) {
+        val intent = Intent("com.example.rtsptoyoutubertmp.STREAM_STATE")
+        intent.putExtra("is_streaming", streaming)
+        intent.setPackage(packageName)
+        sendBroadcast(intent)
+    }
+
     override fun onDestroy() {
+        serviceScope.cancel()
         releaseLocks()
         super.onDestroy()
     }
+
     override fun onBind(intent: Intent?): IBinder? = null
 }
