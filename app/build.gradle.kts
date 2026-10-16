@@ -46,7 +46,7 @@ android {
         debug {
             packaging {
                 jniLibs {
-                    // Dla API 35+ zaleca się false, aby biblioteki były wyrównane i mapowane bezpośrednio z APK
+                    // Dla API 35+ zaleca się false, aby biblioteki były wyrównanie i mapowane bezpośrednio z APK
                     useLegacyPackaging = false
                 }
             }
@@ -87,7 +87,7 @@ dependencies {
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.ui.graphics)
     implementation(libs.androidx.compose.ui.tooling.preview)
-    implementation(libs.androidx.compose.material3)
+    implementation("androidx.compose.material3:material3")
     implementation(libs.ffmpeg.kit.full)
     implementation(libs.smart.exception.java)
 
