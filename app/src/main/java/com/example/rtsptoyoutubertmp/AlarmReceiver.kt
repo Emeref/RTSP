@@ -5,6 +5,7 @@ import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.util.Log
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -21,14 +22,20 @@ class AlarmReceiver : BroadcastReceiver() {
         val now = System.currentTimeMillis()
         val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
         
+        // Log: Check if alarm is triggered
+        Log.d("DEBUG_ALARM", "AlarmReceiver: onReceive called. Target: ${sdf.format(Date(targetTime))}, Now: ${sdf.format(Date(now))}")
+
         // Zabezpieczenie przed przedwczesnym wywołaniem (tolerancja 30s)
         if (targetTime > 0 && targetTime > now + 30000) {
-            StreamingService.addLog(context, "AlarmReceiver: Sygnał zbyt wcześnie. Ignoruję. (Planowo: ${sdf.format(Date(targetTime))}, Teraz: ${sdf.format(Date(now))})")
+            val msg = "AlarmReceiver: Sygnał zbyt wcześnie. Ignoruję. (Planowo: ${sdf.format(Date(targetTime))}, Teraz: ${sdf.format(Date(now))})"
+            StreamingService.addLog(context, msg)
+            Log.d("DEBUG_ALARM", msg)
             return
         }
 
         // Uruchomienie serwisu
         if (intent.action == StreamingService.ACTION_START) {
+            Log.d("DEBUG_ALARM", "AlarmReceiver: Uruchamianie StreamingService...")
             val serviceIntent = Intent(context, StreamingService::class.java).apply {
                 action = StreamingService.ACTION_START
                 putExtra(StreamingService.EXTRA_RTSP, rtsp)
@@ -36,6 +43,8 @@ class AlarmReceiver : BroadcastReceiver() {
                 putExtra(StreamingService.EXTRA_DURATION, duration)
             }
             context.startForegroundService(serviceIntent)
+        } else {
+            Log.w("DEBUG_ALARM", "AlarmReceiver: Nieznana akcja: ${intent.action}")
         }
 
         // Zaplanowanie kolejnego powtórzenia na jutro
@@ -70,6 +79,8 @@ class AlarmReceiver : BroadcastReceiver() {
             pendingIntent
         )
         
-        StreamingService.addLog(context, "AlarmReceiver: Zaplanowano powtórkę na jutro: ${sdf.format(Date(nextTrigger))}")
+        val successMsg = "AlarmReceiver: Zaplanowano powtórkę na jutro: ${sdf.format(Date(nextTrigger))}"
+        StreamingService.addLog(context, successMsg)
+        android.util.Log.d("DEBUG_ALARM", successMsg)
     }
 }

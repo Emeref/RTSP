@@ -19,9 +19,27 @@ class YouTubeServiceManager(
             val token = tokenManager.getAccessToken() ?: return null
 
             val response = apiService.listLiveBroadcasts("Bearer $token")
-            val activeBroadcast = response.items.firstOrNull { 
-                it.status?.complete == false 
+            val items = response.items
+            Log.d(TAG, "YouTubeServiceManager: Znaleziono ${items.size} transmisji w API")
+            
+            val activeBroadcast = items.firstOrNull { item ->
+                val isNotComplete = item.status?.complete == false
+                if (isNotComplete) {
+                    Log.d(TAG, "YouTubeServiceManager: Znaleziono aktywną transmisję: ${item.id}")
+                }
+                isNotComplete
             }
+            
+            if (activeBroadcast == null) {
+                Log.d(TAG, "YouTubeServiceManager: NIE znaleziono aktywnej transmisji (status complete == false). Sprawdzam inne stany...")
+                // Fallback: znajdź jakąkolwiek transmisję, która nie jest już zakończona, 
+                // ale być może ma inny status (np. tworzona/w toku)
+                val fallback = items.firstOrNull { it.id != null }
+                if (fallback != null) {
+                    Log.d(TAG, "YouTubeServiceManager: Found fallback broadcast: ${fallback.id}")
+                }
+            }
+
             activeBroadcast?.id
         } catch (e: Exception) {
             Log.e(TAG, "Error finding active broadcast", e)

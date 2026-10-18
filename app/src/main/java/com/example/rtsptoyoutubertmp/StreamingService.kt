@@ -81,19 +81,24 @@ class StreamingService : Service() {
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
-        // Poziom logowania AV_LOG_WARNING
-        FFmpegKitConfig.setLogLevel(Level.AV_LOG_WARNING)
+        // Poziom logowania AV_LOG_INFO dla lepszej diagnostyki
+        FFmpegKitConfig.setLogLevel(Level.AV_LOG_INFO)
         FFmpegKitConfig.enableLogCallback { ffmpegLog ->
             val msg = ffmpegLog.message
-            // Zapisujemy tylko błędy z FFmpeg, odrzucając klatki i komunikaty postępu
-            if (msg.contains("error", ignoreCase = true) || msg.contains("failed", ignoreCase = true) || msg.contains("invalid", ignoreCase = true)) {
-                addLog(this, "FFmpeg Err: ${msg.trim()}")
+            // Logujemy wszystkie istotne informacje, w tym błędy i ostrzeżenia
+            if (msg.contains("error", ignoreCase = true) || 
+                msg.contains("failed", ignoreCase = true) || 
+                msg.contains("invalid", ignoreCase = true) ||
+                msg.contains("connection", ignoreCase = true) ||
+                msg.contains("handshake", ignoreCase = true)) {
+                addLog(this, "FFmpeg: ${msg.trim()}")
             }
         }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val action = intent?.action
+        addLog(this, "onStartCommand: action=$action, flags=$flags, startId=$startId")
         
         if (action == ACTION_STOP) {
             stopStreaming()
@@ -130,8 +135,11 @@ class StreamingService : Service() {
     }
 
     private fun startStreamingTask(rtsp: String, rtmp: String, duration: Long) {
+        // Wyczyść wszelkie stare timery/callbacks przed rozpoczęciem nowego streamu
+        handler.removeCallbacksAndMessages(null)
+
         if (isStreaming) {
-            addLog(this, "Service: Stream już działa, ignoruję żądanie.")
+            addLog(this, "Service: Stream już działa (isStreaming=true), ignoruję żądanie.")
             return
         }
         
@@ -143,7 +151,7 @@ class StreamingService : Service() {
         if (duration > 0) {
             handler.postDelayed({
                 addLog(this, "STOP: Zakończono sesję zgodnie z harmonogramem ($duration ms)")
-                stopStreamingInternal()
+                endSession(false)
             }, duration)
         }
     }
@@ -172,7 +180,7 @@ class StreamingService : Service() {
     private fun startFFmpeg(rtspUrl: String, rtmpUrl: String) {
         val ffmpegArguments = arrayOf(
             "-nostats",
-            "-loglevel", "error",
+            "-loglevel", "info",
             "-rtsp_transport", "tcp",
             "-i", rtspUrl,
             "-f", "lavfi",
@@ -210,44 +218,60 @@ class StreamingService : Service() {
 
             isStreaming = false
             sendStateBroadcast(false)
+            endSession(false)
         }
         currentSessionId = session.sessionId
     }
 
-    private fun stopStreamingInternal() {
-        addLog(this, "Zatrzymywanie sesji FFmpeg...")
+    private fun endSession(wasManual: Boolean) {
+        if (!isStreaming && currentSessionId == null) return
+        
+        addLog(this, "EndSession: Rozpoczynam kończenie sesji (manualna=${wasManual})...")
+        
+        // 1. Zatrzymaj FFmpeg, jeśli jeszcze działa
         currentSessionId?.let {
+            addLog(this, "EndSession: Anulowanie sesji FFmpeg ID: $it")
             FFmpegKit.cancel(it)
         }
-        FFmpegKit.cancel() 
+        FFmpegKit.cancel()
+        
+        // 2. Wyczyść wszelkie timery i locki
+        handler.removeCallbacksAndMessages(null)
+        releaseLocks()
+        
         isStreaming = false
         sendStateBroadcast(false)
-        releaseLocks()
-        stopForeground(STOP_FOREGROUND_REMOVE)
-        stopSelf()
-
-        // Task 3.2: Complete the YouTube broadcast
-        serviceScope.launch {
+        
+        // 3. Zakończ transmisję na YouTube (wykorzystujemy NonCancellable, aby ukończyć nawet po onDestroy)
+        serviceScope.launch(NonCancellable) {
             val app = application as App
             val youtubeManager = app.youtubeServiceManager
+            
+            // Najpierw próbujemy znaleźć aktywną transmisję, by ją zakończyć
             val activeBroadcastId = youtubeManager.findActiveBroadcastId()
             if (activeBroadcastId != null) {
-                addLog(this@StreamingService, "Service: Found active broadcast: $activeBroadcastId. Completing it...")
+                addLog(this@StreamingService, "EndSession: Znaleziono aktywną transmisję: $activeBroadcastId. Kończenie...")
                 val success = youtubeManager.completeBroadcast(activeBroadcastId)
                 if (success) {
-                    addLog(this@StreamingService, "Service: Broadcast completed successfully.")
+                    addLog(this@StreamingService, "EndSession: Transmisja na YT zakończona pomyślnie.")
                 } else {
-                    addLog(this@StreamingService, "Service: Failed to complete broadcast.")
+                    addLog(this@StreamingService, "EndSession: Błąd zakończenia transmisji na YT.")
                 }
             } else {
-                addLog(this@StreamingService, "Service: No active broadcast found to complete.")
+                addLog(this@StreamingService, "EndSession: Brak aktywnej transmisji do zakończenia.")
+            }
+            
+            // 4. Wyłącz usługę na samym końcu
+            withContext(Dispatchers.Main) {
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                stopSelf()
             }
         }
     }
 
     private fun stopStreaming() {
         addLog(this, "STOP: Zatrzymano ręcznie")
-        stopStreamingInternal()
+        endSession(true)
     }
 
     private fun createNotificationChannel() {
@@ -275,6 +299,7 @@ class StreamingService : Service() {
     }
 
     override fun onDestroy() {
+        handler.removeCallbacksAndMessages(null)
         serviceScope.cancel()
         releaseLocks()
         super.onDestroy()

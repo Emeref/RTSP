@@ -364,14 +364,28 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showLogContent(fileName: String, content: String) {
-        val textView = TextView(this)
-        val reversedContent = content.lines().reversed().joinToString("\n").trim()
-        textView.text = reversedContent
-        textView.setPadding(16, 16, 16, 16)
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+        val scrollView = ScrollView(this)
+        val textView = TextView(this).apply {
+            text = content.lines().reversed().joinToString("\n").trim()
+            setPadding(48, 48, 48, 48)
+            textSize = 14f
+        }
+        scrollView.addView(textView)
+        container.addView(scrollView)
+
         AlertDialog.Builder(this)
             .setTitle(fileName)
-            .setView(ScrollView(this).apply { addView(textView) })
+            .setView(container)
             .setPositiveButton("Zamknij", null)
+            .setNeutralButton("Kopiuj", { _, _ ->
+                val clipboard = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
+                val clip = ClipData.newPlainText("Logs", textView.text.toString())
+                clipboard.setPrimaryClip(clip)
+                Toast.makeText(this, "Logi skopiowane do schowka", Toast.LENGTH_SHORT).show()
+            })
             .show()
     }
 
