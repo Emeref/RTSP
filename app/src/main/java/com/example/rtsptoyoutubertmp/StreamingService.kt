@@ -113,20 +113,36 @@ class StreamingService : Service() {
             if (rtsp.isNotEmpty() && rtmp.isNotEmpty()) {
                 addLog(this, "Service: Otrzymano żądanie startu. RTSP=$rtsp, RTMP=$rtmp, Czas=$duration")
                 
-                // Task 1.4: Refresh token before starting stream
-                serviceScope.launch {
-                    val app = application as App
-                    val success = app.authManager.refreshAccessToken()
-                    if (success) {
-                        addLog(this@StreamingService, "Service: Token refreshed successfully.")
-                    } else {
-                        addLog(this@StreamingService, "Service: Failed to refresh token. Using old one if valid, else failing.")
-                    }
-                }
-
+                // Uruchomienie powiadomienia musi nastąpić natychmiast, aby uniknąć crasha ForegroundServiceDidNotStartInTimeException
                 acquireLocks()
                 startForegroundServiceWithNotification()
-                startStreamingTask(rtsp, rtmp, duration)
+
+                serviceScope.launch {
+                    val app = application as App
+                    addLog(this@StreamingService, "Service: Próba odświeżenia tokena przed startem...")
+                    val success = app.authManager.refreshAccessToken()
+                    
+                    val isTokenValid = app.tokenManager.isTokenExpired().not()
+                    
+                    if (success || isTokenValid) {
+                        if (success) {
+                            addLog(this@StreamingService, "Service: Token odświeżony pomyślnie.")
+                        } else {
+                            addLog(this@StreamingService, "Service: Refresh nie udał się, ale stary token jest nadal ważny. Kontynuuję...")
+                        }
+                        
+                        // Uruchomienie streamu musi być na Main Thread
+                        withContext(Dispatchers.Main) {
+                            startStreamingTask(rtsp, rtmp, duration)
+                        }
+                    } else {
+                        addLog(this@StreamingService, "Service: BRAK ważnego tokena. Nie można rozpocząć streamu.")
+                        withContext(Dispatchers.Main) {
+                            stopForeground(STOP_FOREGROUND_REMOVE)
+                            stopSelf()
+                        }
+                    }
+                }
             }
             return START_NOT_STICKY
         }

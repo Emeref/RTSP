@@ -22,25 +22,28 @@ class YouTubeServiceManager(
             val items = response.items
             Log.d(TAG, "YouTubeServiceManager: Znaleziono ${items.size} transmisji w API")
             
+            // 1. Szukaj transmisji, która jest w trakcie (status complete == false)
             val activeBroadcast = items.firstOrNull { item ->
-                val isNotComplete = item.status?.complete == false
-                if (isNotComplete) {
-                    Log.d(TAG, "YouTubeServiceManager: Znaleziono aktywną transmisję: ${item.id}")
-                }
-                isNotComplete
-            }
-            
-            if (activeBroadcast == null) {
-                Log.d(TAG, "YouTubeServiceManager: NIE znaleziono aktywnej transmisji (status complete == false). Sprawdzam inne stany...")
-                // Fallback: znajdź jakąkolwiek transmisję, która nie jest już zakończona, 
-                // ale być może ma inny status (np. tworzona/w toku)
-                val fallback = items.firstOrNull { it.id != null }
-                if (fallback != null) {
-                    Log.d(TAG, "YouTubeServiceManager: Found fallback broadcast: ${fallback.id}")
-                }
+                item.status?.complete == false
             }
 
-            activeBroadcast?.id
+            if (activeBroadcast != null) {
+                Log.d(TAG, "YouTubeServiceManager: Znaleziono aktywną transmisję: ${activeBroadcast.id}")
+                return activeBroadcast.id
+            }
+
+            // 2. Jeśli nie znaleziono idealnej, sprawdź czy są jakiekolwiek transmisje, 
+            // które nie są jeszcze zakończone (fallback)
+            Log.d(TAG, "YouTubeServiceManager: BRAK aktywnej transmisji (complete == false). Szukam fallbacku...")
+            
+            val fallback = items.firstOrNull { it.id != null }
+            if (fallback != null) {
+                Log.d(TAG, "YouTubeServiceManager: Znaleziono fallback: ${fallback.id}")
+                return fallback.id
+            }
+
+            Log.d(TAG, "YouTubeServiceManager: NIE znaleziono żadnej aktywnej transmisji w API.")
+            null
         } catch (e: Exception) {
             Log.e(TAG, "Error finding active broadcast", e)
             null
