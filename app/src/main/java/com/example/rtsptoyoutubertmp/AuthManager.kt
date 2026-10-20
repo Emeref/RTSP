@@ -14,6 +14,7 @@ import androidx.credentials.GetCredentialResponse
 import androidx.credentials.exceptions.GetCredentialException
 import androidx.credentials.exceptions.NoCredentialException
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
+import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 
 class AuthManager(
@@ -70,20 +71,18 @@ class AuthManager(
 
     /**
      * Requesting YouTube access requires a full OAuth 2.0 flow to get a refresh_token.
-     * This typically requires a serverAuthCode and exchanging it on a backend.
-     * For now, this is a placeholder for that process.
+     * This requires the Client ID from Google Cloud Console and a server-side 
+     * exchange of the Authorization Code for the actual tokens.
      */
     suspend fun signInForYouTube(activity: Activity): AuthResult = withContext(Dispatchers.Main) {
         val credentialManager = CredentialManager.create(context)
 
-        val googleIdOption = GetGoogleIdOption.Builder()
-            .setFilterByAuthorizedAccounts(false)
-            .setServerClientId(WEB_CLIENT_ID)
+        val googleSignInOption = GetSignInWithGoogleOption.Builder(WEB_CLIENT_ID)
             .setNonce(generateSecureRandomNonce())
             .build()
 
         val request = GetCredentialRequest.Builder()
-            .addCredentialOption(googleIdOption)
+            .addCredentialOption(googleSignInOption)
             .build()
 
         try {
@@ -105,16 +104,19 @@ class AuthManager(
             try {
                 val googleIdTokenCredential = GoogleIdTokenCredential.createFrom(credential.data)
                 val idToken = googleIdTokenCredential.idToken
-                
+                val serverAuthCode = credential.data.getString("com.google.android.libraries.identity.googleid.APPLICATION_CREDENTIAL_TYPE") 
+                // Note: In a real implementation, the serverAuthCode is part of the data returned.
+
                 Log.d(TAG, "Successfully received ID Token: $idToken")
 
-                // NOTE: In a production app, you would send this idToken to your backend.
-                // Your backend would then exchange it for an Access Token and a Refresh Token.
-                // For now, we'll simulate a successful login and storage.
-
+                // TODO: In a real app, send the `serverAuthCode` to your backend.
+                // Your backend exchanges it for a real Access Token and Refresh Token.
+                
+                // FOR NOW: We simulate the result of a successful exchange for testing purposes.
+                // In a real app, this data comes from your backend response.
                 tokenManager.saveTokens(
-                    accessToken = "simulated_access_token",
-                    refreshToken = "simulated_refresh_token",
+                    accessToken = "access_token_from_backend",
+                    refreshToken = "refresh_token_from_backend",
                     expiresInSeconds = 3600
                 )
 

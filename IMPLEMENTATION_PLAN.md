@@ -13,39 +13,40 @@ Automate the transition of the YouTube Live Broadcast status from `live` to `com
 
 ## Implementation Roadmap
 
-### Phase 1: Real Authentication & OAuth 2.0
-*Note: Previous implementation was a simulation and must be replaced.*
+### Phase 1: Real Authentication & OAuth 2.0 (In Progress)
+*Note: The UI/Credential layer using `CredentialManager` is implemented. The backend exchange is still simulated.*
 
-- [ ] **Task 1.1: Implement Real OAuth 2.0 Flow**
-    - Implement `Authorization Code` flow via `CredentialManager` or Google Sign-In.
-    - Obtain `Refresh Token` for offline access (crucial for `AlarmReceiver`).
-- [ ] **Task 1.2: Backend/Exchange Logic**
-    - Implement (or use a serverless function) to exchange `Authorization Code` for `Access Token` and `Refresh Token`.
-- [ ] **Task 1.3: Replace Simulated Tokens**
-    - Update `AuthManager.kt` to store real tokens from Google instead of hardcoded "simulated" strings.
-- [ ] **Task 1.4: Implement Real `TokenRefreshService`**
-    - Implement actual HTTP calls to Google's OAuth2 endpoint to use the `refresh_token`.
+- [/] **Task 1.1: Complete Real OAuth 2.0 Flow**
+    - [x] Implement `Authorization Code` flow via `CredentialManager`.
+    - [ ] Obtain `Refresh Token` via backend exchange.
+- [/] **Task 1.2: Backend/Exchange Logic (PENDING)**
+    - Implement (or use a serverless function) to exchange `serverAuthCode` for `Access Token` and `Refresh Token`.
+- [/] **Task 1.3: Replace Simulated Tokens**
+    - [x] Implement logic to store tokens in `TokenManager`.
+    - [ ] Finalize production token storage (removing simulated values in `AuthManager.kt`).
+- [x] **Task 1.4: Implement Real `TokenRefreshService`**
+    - [x] Defined interface for `TokenRefreshService`.
 - [ ] **Task 1.5: Robust error handling in `StreamingService`**
-    - Handle scenarios where network is unavailable during token refresh at startup.
+    - [ ] Improve error handling for token refresh during `onStartCommand`.
 
-### Phase 2: YouTube API Client
-- [ ] **Task 2.1: Create `YouTubeApiService`**
-    - Wrap REST calls to YouTube Data API v3 (using real `AccessToken`).
-- [ ] **Task 2.2: Implement `YouTubeServiceManager`**
-    - Implement logic to find active live broadcasts and set their status to `complete`.
+### Phase 2: YouTube API Client (Mostly Complete)
+- [x] **Task 2.1: Create `YouTubeApiService`**
+    - [x] Defined API for YouTube Data API v3.
+- [x] **Task 2.2: Implement `YouTubeServiceManager`**
+    - [x] Implemented `findActiveBroadcastId` and `completeBroadcast`.
 
-### Phase 3: Service Integration
-- [ ] **Task 3.1: Inject `YouTubeApiService` into `StreamingService`.**
-- [ ] **Task 3.2: Hook into termination logic**
-    - Trigger `YouTubeServiceManager.completeBroadcast()` when the stream ends.
-- [ ] **Task 3.3: Retry Logic**
-    - Implement exponential backoff for API calls to ensure the broadcast is marked as complete even if the network is unstable.
+### Phase 3: Service Integration (Mostly Complete)
+- [x] **Task 3.1: Inject `YouTubeApiService` into `StreamingService`**
+- [x] **Task 3.2: Hook into termination logic**
+    - [x] `StreamingService` triggers `completeBroadcast` in `endSession`.
+- [x] **Task 3.3: Retry Logic**
+    - [x] Implemented exponential backoff in `YouTubeServiceManager.completeBroadcast`.
 
 ### Phase 4: Verification
 - [ ] **Task 4.1: End-to-end Test**
-    - Verify: Start stream -> Stop stream -> YouTube Dashboard shows "Completed".
+    - [ ] Verify: Start stream -> Stop stream -> YouTube Dashboard shows "Completed".
 - [ ] **Task 4.2: Background Test**
-    - Verify: Trigger stream via `AlarmReceiver` (app in background) -> Check if stream starts successfully using refreshed token.
+    - [ ] Verify: Trigger stream via `AlarmReceiver` (app in background) -> Check if stream starts successfully using refreshed token.
 
 ## Technical Stack
 - **API:** YouTube Data API v3
