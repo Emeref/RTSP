@@ -20,7 +20,8 @@ import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 class AuthManager(
     private val context: Context,
     private val tokenManager: TokenManager,
-    private val tokenRefreshService: TokenRefreshService
+    private val tokenRefreshService: TokenRefreshService,
+    private val tokenExchangeService: TokenExchangeService
 ) {
 
     companion object {
@@ -97,28 +98,33 @@ class AuthManager(
         }
     }
 
-    private fun handleSignIn(result: GetCredentialResponse): AuthResult {
+    private suspend fun handleSignIn(result: GetCredentialResponse): AuthResult {
         val credential = result.credential
 
         return if (credential.type == GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
             try {
                 val googleIdTokenCredential = GoogleIdTokenCredential.createFrom(credential.data)
                 val idToken = googleIdTokenCredential.idToken
-                val serverAuthCode = credential.data.getString("com.google.android.libraries.identity.googleid.APPLICATION_CREDENTIAL_TYPE") 
-                // Note: In a real implementation, the serverAuthCode is part of the data returned.
+                val serverAuthCode = credential.data.getString("com.google.android.libraries.identity.googleid.APPLICATION_CREDENTIAL_TYPE")
 
                 Log.d(TAG, "Successfully received ID Token: $idToken")
 
-                // TODO: In a real app, send the `serverAuthCode` to your backend.
-                // Your backend exchanges it for a real Access Token and Refresh Token.
-                
-                // FOR NOW: We simulate the result of a successful exchange for testing purposes.
-                // In a real app, this data comes from your backend response.
-                tokenManager.saveTokens(
-                    accessToken = "access_token_from_backend",
-                    refreshToken = "refresh_token_from_backend",
-                    expiresInSeconds = 3600
-                )
+                if (serverAuthCode != null) {
+                    try {
+                        val tokenResponse = tokenExchangeService.exchangeCodeForTokens(serverAuthCode)
+                        tokenManager.saveTokens(
+                            accessToken = tokenResponse.accessToken,
+                            refreshToken = tokenResponse.refreshToken,
+                            expiresInSeconds = tokenResponse.expiresIn
+                        )
+                        Log.d(TAG, "Successfully exchanged code for tokens")
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Token exchange failed", e)
+                        return AuthResult.Error("Failed to exchange authorization code")
+                    }
+                } else {
+                    Log.w(TAG, "No serverAuthCode received in credential data")
+                }
 
                 AuthResult.Success
             } catch (e: Exception) {

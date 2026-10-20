@@ -29,10 +29,14 @@ class TokenManager(context: Context) {
         private const val KEY_EXPIRATION_TIME = "expiration_time"
     }
 
-    fun saveTokens(accessToken: String, refreshToken: String, expiresInSeconds: Long) {
+    fun saveTokens(accessToken: String, refreshToken: String?, expiresInSeconds: Long) {
         sharedPreferences.edit().apply {
             putString(KEY_ACCESS_TOKEN, accessToken)
-            putString(KEY_REFRESH_TOKEN, refreshToken)
+            if (refreshToken != null) {
+                putString(KEY_REFRESH_TOKEN, refreshToken)
+            } else {
+                remove(KEY_REFRESH_TOKEN)
+            }
             putLong(KEY_EXPIRATION_TIME, System.currentTimeMillis() + (expiresInSeconds * 1000))
             apply()
         }

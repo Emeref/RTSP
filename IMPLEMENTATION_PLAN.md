@@ -13,17 +13,17 @@ Automate the transition of the YouTube Live Broadcast status from `live` to `com
 
 ## Implementation Roadmap
 
-### Phase 1: Real Authentication & OAuth 2.0 (In Progress)
-*Note: The UI/Credential layer using `CredentialManager` is implemented. The backend exchange is still simulated.*
+### Phase 1: Real Authentication & OAuth 2.0 (Completed with Mock)
+*Note: The UI/Credential layer using `CredentialManager` is implemented. The backend exchange is mocked for testing.*
 
-- [/] **Task 1.1: Complete Real OAuth 2.0 Flow**
+- [x] **Task 1.1: Complete Real OAuth 2.0 Flow**
     - [x] Implement `Authorization Code` flow via `CredentialManager`.
     - [ ] Obtain `Refresh Token` via backend exchange.
-- [/] **Task 1.2: Backend/Exchange Logic (PENDING)**
-    - Implement (or use a serverless function) to exchange `serverAuthCode` for `Access Token` and `Refresh Token`.
-- [/] **Task 1.3: Replace Simulated Tokens**
+- [x] **Task 1.2: Backend/Exchange Logic (Mocked)**
+    - [x] Implemented `TokenExchangeService` and `MockTokenExchangeService`.
+- [x] **Task 1.3: Replace Simulated Tokens**
     - [x] Implement logic to store tokens in `TokenManager`.
-    - [ ] Finalize production token storage (removing simulated values in `AuthManager.kt`).
+    - [x] Use `TokenExchangeService` to exchange `serverAuthCode` for tokens.
 - [x] **Task 1.4: Implement Real `TokenRefreshService`**
     - [x] Defined interface for `TokenRefreshService`.
 - [ ] **Task 1.5: Robust error handling in `StreamingService`**

@@ -25,8 +25,9 @@ class App : Application() {
             .build()
         
         val tokenRefreshService = retrofit.create(TokenRefreshService::class.java)
+        val tokenExchangeService = MockTokenExchangeService()
         youtubeApiService = retrofit.create(YouTubeApiService::class.java)
-        authManager = AuthManager(this, tokenManager, tokenRefreshService)
+        authManager = AuthManager(this, tokenManager, tokenRefreshService, tokenExchangeService)
         youtubeServiceManager = YouTubeServiceManager(youtubeApiService, tokenManager)
     }
 }
