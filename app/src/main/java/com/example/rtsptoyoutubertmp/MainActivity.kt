@@ -16,7 +16,9 @@ import android.text.TextWatcher
 import android.widget.*
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.lifecycleScope
 import com.google.android.material.textfield.TextInputEditText
+import kotlinx.coroutines.launch
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -27,6 +29,7 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var rtspEditText: TextInputEditText
     private lateinit var rtmpEditText: TextInputEditText
+    private lateinit var btnSignInYouTube: Button
     private lateinit var startButton: Button
     private lateinit var stopStreamButton: Button
     private lateinit var tasksContainer: LinearLayout
@@ -36,7 +39,7 @@ class MainActivity : AppCompatActivity() {
 
     private var isScheduled = false
     private val handler = Handler(Looper.getMainLooper())
-    private val prefs by lazy { getSharedPreferences("streaming_prefs", Context.MODE_PRIVATE) }
+    private val prefs by lazy { getSharedPreferences("streaming_prefs", MODE_PRIVATE) }
     private val timeFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
 
     private val serviceStateReceiver = object : BroadcastReceiver() {
@@ -82,6 +85,7 @@ class MainActivity : AppCompatActivity() {
 
         rtspEditText = findViewById(R.id.rtspEditText)
         rtmpEditText = findViewById(R.id.rtmpEditText)
+        btnSignInYouTube = findViewById(R.id.btnSignInYouTube)
         startButton = findViewById(R.id.startStreamButton)
         stopStreamButton = findViewById(R.id.stopStreamButton)
         stopStreamButton.isEnabled = false
@@ -108,6 +112,26 @@ class MainActivity : AppCompatActivity() {
             statusTextView.text = "Status: Zatrzymano"
         }
 
+        btnSignInYouTube.setOnClickListener {
+            val authManager = (application as App).authManager
+            lifecycleScope.launch {
+                val result = authManager.signInForYouTube(this@MainActivity)
+                when (result) {
+                    is AuthManager.AuthResult.Success -> {
+                        Toast.makeText(this@MainActivity, "Zalogowano pomyślnie!", Toast.LENGTH_SHORT).show()
+                    }
+                    is AuthManager.AuthResult.Error -> {
+                        AlertDialog.Builder(this@MainActivity)
+                            .setTitle("Błąd logowania")
+                            .setMessage(result.message)
+                            .setPositiveButton("OK", null)
+                            .show()
+                    }
+                    else -> {}
+                }
+            }
+        }
+
         findViewById<Button>(R.id.btnAddTask).setOnClickListener { 
             logAction("Kliknięto: Dodaj zadanie")
             addTaskRow(null, null) 
@@ -129,7 +153,9 @@ class MainActivity : AppCompatActivity() {
     override fun onStart() {
         super.onStart()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(serviceStateReceiver, IntentFilter("com.example.rtsptoyoutubertmp.STREAM_STATE"), Context.RECEIVER_NOT_EXPORTED)
+            registerReceiver(serviceStateReceiver, IntentFilter("com.example.rtsptoyoutubertmp.STREAM_STATE"),
+                RECEIVER_NOT_EXPORTED
+            )
         } else {
             registerReceiver(serviceStateReceiver, IntentFilter("com.example.rtsptoyoutubertmp.STREAM_STATE"))
         }
@@ -261,7 +287,7 @@ class MainActivity : AppCompatActivity() {
 
         val rtsp = rtspEditText.text.toString()
         val rtmp = rtmpEditText.text.toString()
-        val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        val alarmManager = getSystemService(ALARM_SERVICE) as AlarmManager
         val now = Calendar.getInstance()
         
         val taskDetails = mutableListOf<String>()
@@ -325,12 +351,12 @@ class MainActivity : AppCompatActivity() {
         isScheduled = true
         prefs.edit().putBoolean("is_scheduled", true).apply()
         startButton.text = "STOP HARMONOGRAM"
-        Toast.makeText(this, "Zaplanowano zadania", Toast.LENGTH_SHORT).show()
         statusTextView.text = "Status: Zaplanowano"
+        Toast.makeText(this, "Zaplanowano zadania", Toast.LENGTH_SHORT).show()
     }
 
     private fun stopAll(stopService: Boolean = true) {
-        val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        val alarmManager = getSystemService(ALARM_SERVICE) as AlarmManager
         for (i in 0 until 50) {
             alarmManager.cancel(getAlarmIntent(i))
         }
